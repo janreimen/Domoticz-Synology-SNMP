@@ -4,7 +4,7 @@ sys.path[:0] = [os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."), 
 from synoSNMP.config import Settings
 from synoSNMP.engine import Engine
 from fakeclient import FakeClient
-import mibdata
+import mibdata  # noqa: F401  (re-exported: test modules do "from helpers import mibdata")
 
 
 class Clock:

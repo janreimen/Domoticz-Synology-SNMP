@@ -1,9 +1,23 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-archives/
-.vscode/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# build output
+dist/
+
+# editors / OS
 .idea/
-.env
-.env.*
-*.secret
+.vscode/
+*.swp
+.DS_Store
+
+# SNMP captures contain serial numbers, host names and MAC addresses: never commit them
+dump*.txt
+*-dump.txt
+nas-dump*.txt
+*.mibdump

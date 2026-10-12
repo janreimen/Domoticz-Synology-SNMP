@@ -8,7 +8,8 @@ RESERVED = {"Parameters", "Devices", "Images", "Settings"}      # injected into 
 
 class PluginNamespaceTests(unittest.TestCase):
     def test_plugin_py_never_binds_a_name_domoticz_injects(self):
-        tree = ast.parse(open(os.path.join(HERE, "..", "plugin.py")).read())
+        with open(os.path.join(HERE, "..", "plugin.py"), encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
         bound = set()
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):

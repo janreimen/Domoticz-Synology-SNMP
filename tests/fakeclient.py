@@ -8,7 +8,7 @@ from synoSNMP import snmpparse as P
 from synoSNMP.config import Settings
 from synoSNMP.snmpcli import SnmpClient, SnmpTimeout
 
-from mibdata import Mib, okey
+from mibdata import Mib
 
 _TYPES = {"integer": P.INTEGER, "gauge": P.GAUGE, "counter": P.COUNTER, "counter64": P.COUNTER64,
           "string": P.STRING, "timeticks": P.TIMETICKS, "objectid": P.OID, "float": P.FLOAT}
