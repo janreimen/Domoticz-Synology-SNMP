@@ -1,7 +1,8 @@
 import unittest
 
 import domoticz_stub as dz
-from helpers import by_key, make, mibdata
+import mibdata
+from helpers import make
 from synoSNMP.devices import DeviceManager
 from synoSNMP.engine import CycleResult
 from synoSNMP.model import Reading

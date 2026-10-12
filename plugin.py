@@ -1,5 +1,5 @@
 """
-<plugin key="SynologySNMP" name="Synology NAS (net-snmp)" author="janreimen" version="0.1.1">
+<plugin key="SynologySNMP" name="Synology NAS (net-snmp)" author="janreimen" version="0.2.0">
     <description>
         <h2>Synology NAS monitor</h2><br/>
         Reads a Synology NAS through the native net-snmp command line tools (snmpget / snmpbulkwalk).

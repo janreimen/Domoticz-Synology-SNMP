@@ -1,114 +1,275 @@
 # Domoticz-Synology-SNMP
 
-Domoticz plugin that monitors a **Synology NAS** through the native **net-snmp command line tools**
-(`snmpget`, `snmpbulkwalk`, `snmpwalk`). No `pysnmp`, no Python packages at all. The installed hardware is
-**detected automatically** and turned into Domoticz devices.
+A [Domoticz](https://www.domoticz.com) plugin that monitors a **Synology NAS** through the native
+**net-snmp command line tools** (`snmpget`, `snmpbulkwalk`, `snmpwalk`).
+
+* **No `pysnmp`, no Python packages at all.** The only dependency is the `snmp` package of your distribution.
+* **The hardware is detected, not configured.** Number of drives, storage pools, volumes, network ports, UPS, fans,
+  SSD cache, expansion units: read from the NAS, turned into Domoticz devices. No "DSM OID" setting, no interface
+  numbers, no disk count.
+* **Never blocks Domoticz.** Polling runs in a background thread; a slow or dead NAS cannot stall the plugin thread.
+* **Modular.** Parser, SNMP client, one collector per hardware area, engine and Domoticz glue are separate modules.
+  A new area is one new file.
+
+> **Status:** version 0.2.0. Developed and tested against simulated DS920+ / DS218+ data and a real `snmpd`
+> serving it, **not yet against a real DSM**. Please read [what is verified and what is not](#what-is-verified-and-what-is-not)
+> and run the check in [First run](#first-run-check-what-your-nas-reports) on your NAS before relying on it.
+
+Contents: [Requirements](#requirements) · [Enable SNMP on the NAS](#enable-snmp-on-the-nas) · [Install](#install) ·
+[Settings](#settings) · [Devices](#what-is-detected-and-created) · [How it works](#how-it-works) ·
+[Command line tool](#first-run-check-what-your-nas-reports) · [Troubleshooting](#troubleshooting) · [FAQ](#faq) ·
+[Migrating](#migrating-from-the-old-pysnmp-plugin) · [Development](#development) · [License](#license)
 
 ## Requirements
 
-On the Domoticz host (for example `rpi4office`):
+| Where | What |
+|---|---|
+| Domoticz host | Domoticz with Python plugin support, **Python 3.7+** |
+| Domoticz host | `snmpget`, `snmpwalk` (and preferably `snmpbulkwalk`): `sudo apt install snmp` |
+| NAS | Synology DSM with the SNMP service enabled |
+
+Without `snmpbulkwalk` (and with SNMP v1) the plugin falls back to plain `snmpwalk`, which is slower.
+If Domoticz runs in a container, the tools must be installed inside the container.
+
+## Enable SNMP on the NAS
+
+DSM: *Control Panel > Terminal & SNMP > SNMP*, tick **Enable SNMP service**, then either
+
+* **SNMPv1/v2c:** set a *Community*. Simple, but the community is sent in clear text; `public` is guessable.
+* **SNMPv3 (recommended):** tick *Enable SNMPv3 service*, set a user name and a password (at least 8 characters)
+  and choose the authentication / privacy protocols. Use the same protocols in the plugin's *SNMPv3 options*.
+
+Then restrict who may ask: *Control Panel > Security > Firewall*, allow UDP 161 from the Domoticz host only.
+
+Check from the Domoticz host (prints the model):
 
 ```sh
-sudo apt install snmp          # provides snmpget / snmpwalk / snmpbulkwalk
+snmpget -v2c -c public -On -m "" NAS_IP 1.3.6.1.4.1.6574.1.5.1.0
+# .1.3.6.1.4.1.6574.1.5.1.0 = STRING: "DS920+"
 ```
 
-On the NAS: *Control Panel > Terminal & SNMP > SNMP service*: enable SNMP and set a v1/v2c community
-or an SNMPv3 user. Python 3.7 or newer.
-
-Check that it works before adding the hardware:
-
-```sh
-snmpget -v2c -c public -On -m "" NAS_IP 1.3.6.1.4.1.6574.1.5.1.0      # -> STRING: "DS920+"
-```
+A wrong community or a blocked port both end in `Timeout: No Response`. SNMP cannot tell them apart.
 
 ## Install
 
 ```sh
 cd /srv/domoticz/plugins
-cp -r /path/to/Domoticz-Synology-SNMP Domoticz-Synology-Plugin       # plugin.py + synoSNMP/ must stay together
+git clone https://github.com/janreimen/Domoticz-Synology-SNMP.git      # or unpack the release archive here
 sudo systemctl restart domoticz
 ```
 
-Then *Setup > Hardware*, type **Synology NAS (net-snmp)**. This is a **new hardware type** (key `SynologySNMP`),
-separate from the old plugin; the old devices are not migrated.
+`plugin.py` and the `synoSNMP/` directory must stay together. Or use the bundled
+[`deploy.sh`](DEPLOY.md), which installs locally or over SSH, makes a backup, restores ownership, restarts Domoticz
+and can verify the NAS afterwards:
+
+```sh
+./deploy.sh --host jan@rpi4office --verify 192.168.1.20
+```
+
+Then *Setup > Hardware*, type **Synology NAS (net-snmp)**, enter the NAS address and credentials, *Add*.
+Full instructions, updates, rollback and removal: **[DEPLOY.md](DEPLOY.md)**.
 
 ## Settings
 
 | Field | Meaning |
 |---|---|
-| NAS address / SNMP port | host name or IP, default 161 |
+| NAS address / SNMP port | host name or IP (IPv6 works), port default 161 |
 | SNMP version | v2c (default), v1 or v3 |
-| Community | v1/v2c community |
-| SNMPv3 user / passphrase | v3 user and authentication passphrase (min. 8 characters) |
-| SNMPv3 options | `level;authProtocol;privProtocol;privPassphrase`, e.g. `authPriv;SHA;AES;`. Empty privacy passphrase re-uses the authentication passphrase |
-| Poll interval | seconds, minimum 10, default 60 |
-| Detail level | Basic / Standard / Full (below) |
-| Debug | verbose log: discovered hardware, SNMP call count and duration per poll |
+| Community (v1/v2c) | the community string |
+| SNMPv3 user / passphrase | v3 user name and authentication passphrase (min. 8 characters) |
+| SNMPv3 options | `level;authProtocol;privProtocol;privPassphrase`, for example `authPriv;SHA;AES;`. Level: `noAuthNoPriv`, `authNoPriv`, `authPriv`. Auth: MD5, SHA, SHA-224/256/384/512. Privacy: DES, AES, AES-192, AES-256. An empty privacy passphrase re-uses the authentication passphrase |
+| Poll interval | seconds between polls, minimum 10, default 60 |
+| Detail level | Basic / Standard / Full, see below. Default Full |
+| Debug | verbose log: what was detected, how many SNMP calls a poll took and how long |
 
-Note: the community / passphrases are passed on the `snmpget` command line, so they are visible to local users
-in `ps` while a request runs. Use an SNMPv3 user with a read-only view on a shared host, and restrict SNMP on the
-NAS to the Domoticz host's IP (DSM firewall).
+Run several NAS units by adding the hardware once per NAS. Each gets its own set of devices.
 
 ## What is detected and created
 
 | Detail level | Area | Devices |
 |---|---|---|
-| Basic | System | system / power / fan / CPU-fan / thermal status (only those the model has), temperature, model + DSM version, DSM update available |
-| | CPU, memory | CPU %, memory % (excluding cache/buffers), memory available (MB), swap %, load 1/5/15 min, uptime |
-| | Drives | per drive: health (status + DSM health + bad sectors), temperature, remaining life (SSD/NVMe), bad sectors; one "Disks Overall" summary. **Number of drives is read from the NAS** |
-| | RAID | status of every storage pool and volume (degraded, repairing, scrubbing, crashed ...) with free/total space |
-| | Volumes | used % and free GB of every volume, USB/eSATA share and the DSM system partition |
-| Standard | Network | per hardware port (eth*, bond*, ovs_eth*, wlan*): link state + speed, received and sent Mbit/s. Docker/veth/loopback are ignored |
+| **Basic** | System | system / power / fan / CPU-fan / thermal status (only those the model reports), system temperature, model + DSM version, "DSM update available" |
+| | CPU, memory | CPU %, memory % (without cache and buffers), memory available, swap %, load 1 min, uptime |
+| | Drives | per drive and per cache drive: **health** (DSM status, DSM health, bad sectors and, for SSD/NVMe, remaining life in the text), **temperature**, remaining life; one "Disks Overall" summary. The number of drives comes from the NAS |
+| | RAID | status of every storage pool and volume (degraded, repairing, scrubbing, crashed, ...) with free/total space |
+| | Volumes | used % and free space of every volume, USB / eSATA shares and the DSM system partition |
+| **Standard** | Network | per hardware port (eth, bond, ovs_eth, wlan): link state + speed, received and sent Mbit/s. Docker / veth / loopback are ignored |
 | | UPS | status, battery charge, load, runtime (only if a UPS is attached) |
-| | Expansion units | power state (DX/RX series, only if attached) |
-| Full | Drive I/O | per drive: utilization %, read and write MB/s |
-| | SMART | per drive: health from reallocated / pending / uncorrectable sectors, power-on hours |
-| | Services | logged-in users per service (HTTP, CIFS, NFS, SSH ...) |
-| | SSD cache, GPU | cache hit rates / GPU load, only on models that have them |
+| | Expansion units | power state of DX/RX units (only if attached) |
+| **Full** | Drive I/O | per drive: load %, read and write MB/s |
+| | SMART | per drive: health from reallocated / pending / uncorrectable sectors, power-on hours (polled every 10 min) |
+| | Services | logged-in users per service (HTTP, CIFS, NFS, SSH, ...) |
+| | Extras | bad-sector counts, 5/15 min load, UPS info, SSD cache hit rates, GPU load (only on models that have them) |
 
-Less important devices (drive I/O, SMART, services, 5/15-minute load, uptime) are created **not visible by default**
-(Domoticz "Used" off); add them under *Setup > Devices*. Alert devices use Domoticz' colors:
-grey = n/a, green = OK, yellow = warning or busy (for example scrubbing), orange = degraded, red = critical.
+Devices that are rarely looked at (drive I/O, SMART, services, extra load averages, uptime, bad sectors, cache hit
+rates) are created **not visible by default**: add them under *Setup > Devices*. They still count towards Domoticz'
+limit of 255 devices per hardware; a very large NAS with expansion units may want the *Standard* level.
 
-Devices are matched by `DeviceID`, never by unit number. A drive or port that disappears is flagged **timed out**
-(not deleted); a new one gets a new device on the next poll. Network interfaces and mounts are re-detected hourly
-and immediately if the NAS renumbers them.
+The full list for a DS920+ and a DS218+ (device IDs, names, types, levels, example values) is in
+**[docs/DEVICES.md](docs/DEVICES.md)**. Rate devices (network, drive I/O) need two samples and appear with the
+second poll.
+
+**Alert colors** (for all status devices): grey = not available, green = OK, yellow = warning or busy (for example
+scrubbing, a few bad sectors), orange = degraded, failing or on battery, red = critical (crashed pool or volume, failed system partition, drive reported critical, low battery).
+
+**Devices are matched by `DeviceID`, never by unit number.** You may rename a device or change its visibility,
+history and notifications stay; the plugin only writes values. A drive, port or volume that disappears is flagged
+**timed out** (not deleted); new hardware gets new devices on the next detection. Detection repeats hourly, and
+immediately when the NAS renumbers its interfaces or mounts.
 
 ## How it works
 
 ```
-plugin.py            Domoticz glue only (manifest + callbacks)
+plugin.py               Domoticz glue only: manifest + callbacks, starts the poller thread
 synoSNMP/
-  config.py          settings from Domoticz Parameters (validated)
-  snmpcli.py         runs snmpget / snmpbulkwalk / snmpwalk (the only module that starts processes)
-  snmpparse.py       parses their output (pure functions)
-  oids.py            OIDs and status tables (Synology MIB guide)
-  engine.py          probe, discovery schedule, collector isolation, de-duplicated error logging
-  poller.py          background thread
-  devices.py         the only module that touches the Domoticz device API
-  model.py util.py   Reading type, key/slug/rate helpers
-  collectors/        system  resources  disks  storage(raid, mounts)  network  ups
-                     diskio  smart  services  extras(ebox, ssd cache, gpu)
+  config.py             settings from Domoticz Parameters (validated)
+  snmpcli.py            runs snmpget / snmpbulkwalk / snmpwalk: the only module that starts processes
+  snmpparse.py          parses their output (pure functions, incl. Opaque floats)
+  oids.py               OIDs and status tables
+  engine.py             connection probe, discovery schedule, collector isolation, de-duplicated error log
+  poller.py             background thread
+  devices.py            the only module that touches the Domoticz device API
+  model.py  util.py     Reading type; key / slug / rate helpers
+  cli.py  __main__.py   python3 -m synoSNMP: the engine without Domoticz
+  collectors/           system  resources  disks  storage(raid, mounts)  network  ups
+                        diskio  smart  services  extras(expansion units, ssd cache, gpu)
 ```
 
 A collector returns `Reading` objects and knows nothing about Domoticz; the device layer knows nothing about SNMP.
-Adding a new area = one new file in `collectors/` plus one line in `collectors/__init__.py`.
+Adding an area = one new file in `collectors/` plus one line in `collectors/__init__.py` (see [CONTRIBUTING](CONTRIBUTING.md)).
 
-## Tests
+**Detection.** On start and then hourly each collector walks the relevant tables (Synology MIB under
+`1.3.6.1.4.1.6574`, UCD-SNMP, HOST-RESOURCES, IF-MIB), decides what exists and builds a device list. Row numbers are
+never trusted: volumes and ports are re-identified by name on every poll, so a renumbering after a firmware
+update or a new volume does not mix up devices.
+
+**Polling.** Every *Poll interval* the background thread runs one cycle and puts the result in a queue; Domoticz'
+heartbeat (every 5 s) drains it and updates devices. Unchanged values are only rewritten every 5 minutes. The work
+per poll, measured on the simulated NAS models:
+
+| Detail level | SNMP calls, first poll / later polls |
+|---|---|
+| Basic | 8 / 5 |
+| Standard | 14 / 8 |
+| Full | 19 / 12 (13 when the 10-minute SMART refresh is due) |
+
+Each call is one short-lived `snmpget` / `snmpbulkwalk` process (about 0.3 s for a whole Full cycle against a local
+`snmpd`; over the LAN add the NAS' response time per call). At the default 60 s that is 12 small process starts a minute.
+
+**Failure handling.** Each collector is isolated: if one fails the others still deliver. A problem is logged **once**
+and its recovery once, not every poll. When the NAS stops answering, all its devices are flagged timed out and values
+resume by themselves when it is back.
+
+## First run: check what your NAS reports
+
+The plugin ships a command line tool that runs the same engine without Domoticz and prints every device it would
+create. Use it before adding the hardware, and whenever a device is missing:
 
 ```sh
-python3 -m unittest discover -s tests          # 79 tests
+cd /srv/domoticz/plugins/Domoticz-Synology-SNMP
+python3 -m synoSNMP NAS_IP -c public                    # SNMPv2c
+python3 -m synoSNMP NAS_IP --rates 10                   # a second sample after 10 s: shows network / disk I/O rates
+python3 -m synoSNMP NAS_IP -v 3 -u monitor -A 'auth passphrase' -X 'privacy passphrase'
+python3 -m synoSNMP NAS_IP --level 1 --json             # machine readable, basic level
+python3 -m synoSNMP NAS_IP --debug                      # also print what each collector detected
 ```
 
-The suite includes end-to-end tests against a **real `snmpd`** serving a DS920+-like data set (skipped
-automatically if `snmpd` is not installed): real binaries, SNMP v1/v2c/v3, timeouts, wrong credentials, aborting a
-request, and the actual `plugin.py` with a Domoticz stub.
+Options: `-p PORT`, `-v 1|2c|3`, `-c COMMUNITY`, `-u USER`, `-A AUTHPASS`, `-X PRIVPASS`, `-l LEVEL`, `-a AUTHPROTO`,
+`-x PRIVPROTO`, `--level 1|2|3`, `--rates SECONDS`, `--json`, `--debug`, `--version-info`.
+Exit status: 0 ok, 1 bad options or tools missing, 2 NAS does not answer, 3 answers but is not a Synology.
+
+If something looks wrong or missing, `tools/capture_mib.sh NAS_IP [community] > dump.txt` records everything the plugin
+reads, which is all that is needed to reproduce the problem offline. Remove serial numbers before sharing it.
 
 ## Troubleshooting
 
-* *"No SNMP answer"*: wrong address/community, SNMP disabled in DSM, or the NAS firewall blocks the Domoticz host.
-  A wrong community looks exactly like a timeout in SNMP v1/v2c.
-* *"does not serve the Synology MIB"*: the agent answers but 1.3.6.1.4.1.6574 is not visible (restricted view, or not a Synology).
-* A device you expect is missing: set Debug and look at the "mounts: ..." / "network ports: ..." / "UPS ..." lines,
-  or compare with `snmpwalk -v2c -c public -On -m "" NAS_IP 1.3.6.1.4.1.6574.2`.
-* `tools/capture_mib.sh NAS_IP > dump.txt` captures everything the plugin reads (redact serial numbers before sharing).
+| Log message / symptom | Meaning and fix |
+|---|---|
+| `No SNMP answer from ...` | wrong address, port or community, SNMP not enabled in DSM, or the NAS firewall blocks the Domoticz host. A wrong community looks exactly like a timeout |
+| `does not serve the Synology MIB` | the agent answers but `1.3.6.1.4.1.6574` is not visible: restricted SNMP view, or not a Synology |
+| `the agent answered but returned no data` | the SNMP view is too restrictive (v3 user without access to the tree) |
+| `Cannot run snmpget` / `net-snmp client tools` | `sudo apt install snmp` (inside the container if containerised) and restart Domoticz |
+| `SNMPv3 ... passphrase must be at least 8 characters` | DSM and net-snmp both require 8+ characters |
+| `All 255 Domoticz units of this hardware are in use` | lower the detail level or delete unused devices |
+| A device you expect is missing | run the command line tool with `--debug`, or set *Debug* and look for the `mounts: ...`, `network ports: ...`, `UPS ...` lines. Compare with `snmpwalk -v2c -c public -On -m "" NAS_IP 1.3.6.1.4.1.6574.2` |
+| A rate device shows nothing | rates need two samples: wait one poll interval |
+| Everything is "timed out" after a NAS reboot | expected while it is down; values resume on their own |
+
+More on a specific symptom: set *Debug* to *Debug*; every poll then logs its SNMP call count and duration.
+
+## FAQ
+
+**Which models and DSM versions work?** No model is special-cased: everything comes from the tables the NAS
+returns, so the same code serves a DS218+, a DS720+, a DS920+, a DS1525+ or a rack unit. Synology documents the MIB
+objects used here for DSM 6.2.4 and newer; DSM 7.x is what the fixtures imitate. Models released since 2025 use the same
+MIB as far as is known; that is an expectation, not something tested on hardware.
+
+**Does it need DSM packages or root access on the NAS?** No. It only reads over SNMP.
+
+**Why do I see fewer devices than your catalogue?** The catalogue is for simulated hardware, and hidden devices are
+not shown until you add them under *Setup > Devices*.
+
+**Can it write or change anything on the NAS?** No. Only `snmpget` and walks are used, never `snmpset`.
+
+**Why not SNMP traps?** Polling is simpler, works through any firewall setup and needs nothing on the Domoticz host
+beyond the client tools.
+
+**Why command line tools instead of a Python library?** One external dependency that every distribution packages and
+patches, no `pip`, no wheels to build on a Raspberry Pi, and the exact same query can be reproduced by hand when
+something is wrong.
+
+## Migrating from the old pysnmp plugin
+
+This is a **new hardware type** (key `SynologySNMP`), separate from the old *Synology Monitor* (`SynoMonitor`). Both can
+run side by side, and the old devices are **not** converted.
+
+1. Install `snmp` (`sudo apt install snmp`), deploy this plugin, add *Synology NAS (net-snmp)* as new hardware.
+2. Compare for a few days. Rebuild dashboards, scenes and notifications on the new devices.
+3. Delete the old hardware (this removes its devices and history) and the old plugin directory. `pysnmp` is no longer needed.
+
+The *DSM OID* field is gone: drive table positions are detected. The check interval is in seconds now (the old plugin
+used minutes).
+
+## What is verified and what is not
+
+**Verified** (automated tests, run on every change): the parser and SNMP client against the real net-snmp tools and a
+real `snmpd` (v1, v2c, v3, timeouts, wrong credentials, aborting a request), every collector against simulated DS920+
+and DS218+ data (also DSM-6-style tables, expansion units, renumbered interfaces and mounts), the device layer
+against a Domoticz stub, the real `plugin.py` loaded the way Domoticz loads it (including the injected globals), and
+`deploy.sh`.
+
+**Not verified on a real DSM**, so please report what your NAS shows (a `capture_mib.sh` dump helps):
+
+* the exact output format and the OID for UPS runtime and battery values (taken from the old plugin);
+* the text of `hrStorageDescr` for volumes, USB shares and the system partition on your DSM version;
+* the numbering of cache drives and expansion-unit drives, and whether a drive in an expansion unit shows up twice;
+* how DSM 7.3 reports drives that are not on Synology's compatibility list;
+* any SNMP changes in DSM 7.3 and later.
+
+**Not covered:** iSCSI LUNs, NFS / SMB latency, high-availability clusters, per-share quotas, Docker container
+statistics.
+
+**Security note:** the community or the SNMPv3 passphrases are passed to `snmpget` on the command line, so they are
+visible to other local users in the process list while a request runs. On a shared host use an SNMPv3 user with a
+read-only view and restrict SNMP on the NAS to the Domoticz host. See [SECURITY.md](SECURITY.md).
+
+## Development
+
+```sh
+make test          # python3 -m unittest discover -s tests
+make lint          # flake8 (pyflakes checks) + shellcheck
+make compat        # vermin: code must run on Python 3.7+
+make package       # dist/Domoticz-Synology-SNMP-<version>.tar.gz
+```
+
+The tests need nothing but Python. The end-to-end tests additionally use a **real `snmpd`** (package `snmpd`) serving a
+DS920+-like data set and are skipped automatically when it is not installed. `docs/DEVICES.md` is generated
+(`python3 tools/gen_device_catalog.py`) and checked by the tests.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add a collector or a model fixture, [ROADMAP.md](ROADMAP.md) for what is
+planned, [CHANGELOG.md](CHANGELOG.md) for what changed and [docs/SNMP-OIDS.md](docs/SNMP-OIDS.md) for the OID reference.
+
+## License
+
+[MIT](LICENSE). The plugin idea and the device concept follow the earlier *Synology Monitor* plugin by
+bramvreugd and febalci; this is an independent rewrite and shares no code with it.

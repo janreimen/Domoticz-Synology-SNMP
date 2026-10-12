@@ -35,6 +35,7 @@ class CycleResult:
     present_keys: Set[str] = field(default_factory=set)
     messages: List[Message] = field(default_factory=list)
     reachable: bool = True
+    not_synology: bool = False      # agent answers but has no Synology MIB (reachable is False then too)
     fatal: bool = False
     info: Dict[str, str] = field(default_factory=dict)
     duration: float = 0.0
@@ -74,7 +75,9 @@ class Engine:
                        % (self.settings.host, self.settings.port, exc))
         except SnmpError as exc:
             self._problem(result, "snmp", "SNMP request failed: %s" % exc)
-            result.reachable = not isinstance(exc, NotSynology)
+            if isinstance(exc, NotSynology):
+                result.reachable = False
+                result.not_synology = True
         except Exception as exc:                          # a bug must never kill the poller thread
             self._problem(result, "engine", "Unexpected error: %s: %s" % (type(exc).__name__, exc))
         result.info = dict(self.info)
