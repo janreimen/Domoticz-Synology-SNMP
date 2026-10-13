@@ -102,7 +102,10 @@ case "$KEEP" in ''|*[!0-9]*) die "--keep must be a number" ;; esac
 case "$DIR" in /|"") die "refusing to use '$DIR' as plugin directory" ;; esac
 
 # ---- what gets deployed --------------------------------------------------------------
-[ -f "${SRC}/plugin.py" ] && [ -d "${SRC}/synoSNMP" ] || die "plugin.py / synoSNMP/ not found next to deploy.sh (${SRC})"
+#[ -f "${SRC}/plugin.py" ] && [ -d "${SRC}/synoSNMP" ] || die "plugin.py / synoSNMP/ not found next to deploy.sh (${SRC})"
+if [ ! -f "${SRC}/plugin.py" ] || [ ! -d "${SRC}/synoSNMP" ]; then
+    die "plugin.py / synoSNMP/ not found next to deploy.sh (${SRC})"
+fi
 NEW_VERSION="$(source_version)"
 [ -n "$NEW_VERSION" ] || die "cannot read __version__ from synoSNMP/__init__.py"
 
