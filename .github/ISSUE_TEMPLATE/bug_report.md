@@ -1,35 +1,44 @@
 ---
 name: Bug report
-about: Something does not work, a value is wrong, or the plugin logs an error
-title: ""
+about: Report a reproducible problem with the Domoticz Synology SNMP plugin
+title: "[Bug]: "
 labels: bug
+assignees: ""
 ---
 
-**What happens, and what did you expect?**
+## Describe the problem
 
-**Environment**
+A clear description of what happened and what you expected to happen.
 
-- Plugin version (Setup > Hardware, or `python3 -m synoSNMP --version-info`):
-- NAS model and DSM version (e.g. DS920+, DSM 7.2.1-69057):
-- SNMP version used (v1 / v2c / v3):
+## Steps to reproduce
+
+1.
+2.
+3.
+
+## Environment
+
 - Domoticz version:
-- Python version (`python3 -V`) and net-snmp version (`snmpget -V`):
-- Domoticz runs on (Raspberry Pi OS, Docker, ...):
+- Plugin version / Git commit:
+- Operating system and architecture (for example, Raspberry Pi OS 64-bit):
+- Python version:
+- Synology NAS model:
+- DSM version:
+- SNMP version (v1, v2c, or v3):
 
-**Output of the command line tool** (run from the plugin directory; remove the serial numbers)
+## Relevant configuration
 
+Describe the relevant plugin settings, but **do not post SNMP community strings, passwords, tokens, public IP addresses, or other secrets**.
+
+## Logs
+
+Paste the relevant Domoticz log lines, with passwords, public IP addresses, serial numbers, and other personal or sensitive data removed.
+
+```text
+Paste relevant log output here
 ```
-python3 -m synoSNMP NAS_IP --debug
-```
 
-**Domoticz log** (Setup > Log, with the hardware's *Debug* option set to *Debug*, a few polls)
+## Additional context
 
-```
+Add screenshots or other details that may help reproduce the problem.
 
-```
-
-**Raw SNMP data (if a device is missing or wrong)**
-
-`tools/capture_mib.sh NAS_IP > dump.txt` records everything the plugin reads. The dump contains the NAS and drive
-serial numbers, the host name and MAC addresses. Remove them, then attach the file. **Never post a community string
-or SNMPv3 passphrase.**
