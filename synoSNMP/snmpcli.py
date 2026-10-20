@@ -13,8 +13,10 @@ Options used on every call:
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import tempfile
 import threading
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -42,7 +44,8 @@ class SnmpUnavailable(SnmpError):
 def _subprocess_runner(owner: "SnmpClient") -> Runner:
     def run(argv: List[str], wall_timeout: float) -> Tuple[int, str, str]:
         try:
-            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    env=owner._subprocess_env)
         except OSError as exc:
             raise SnmpUnavailable("Cannot run %s: %s. %s" % (argv[0], exc, INSTALL_HINT))
         owner._set_proc(proc)
@@ -67,8 +70,10 @@ class SnmpClient:
     WALK_WALL_TIMEOUT = 90  # a whole table walk may legitimately take a while
 
     def __init__(self, settings: Settings, runner: Optional[Runner] = None,
-                 which: Callable[[str], Optional[str]] = shutil.which) -> None:
+                 which: Callable[[str], Optional[str]] = shutil.which,
+                 trace: Optional[Callable[[str], None]] = None) -> None:
         self.s = settings
+        self._trace = trace
         self.calls = 0
         self._lock = threading.Lock()
         self._proc: Optional[subprocess.Popen] = None
@@ -76,6 +81,8 @@ class SnmpClient:
         self._bulk_ok = settings.version != "1"
         self._run = runner or _subprocess_runner(self)
         self._bin: Dict[str, str] = {}
+        self._config_dir: Optional[str] = None
+        self._subprocess_env = None
         if runner is None:
             for tool in ("snmpget", "snmpwalk", "snmpbulkwalk"):
                 path = which(tool)
@@ -85,6 +92,7 @@ class SnmpClient:
                 raise SnmpUnavailable("snmpget/snmpwalk not found in PATH. " + INSTALL_HINT)
             if "snmpbulkwalk" not in self._bin:
                 self._bulk_ok = False
+            self._prepare_private_config()
 
     # -- process control -------------------------------------------------
     def _set_proc(self, proc: Optional[subprocess.Popen]) -> None:
@@ -92,7 +100,7 @@ class SnmpClient:
             self._proc = proc
 
     def stop(self) -> None:
-        """Abort the running request (called from another thread on shutdown)."""
+        """Abort the running request and remove private credentials on shutdown."""
         with self._lock:
             self._stopped = True
             proc = self._proc
@@ -101,6 +109,52 @@ class SnmpClient:
                 proc.kill()
             except OSError:
                 pass
+        self._cleanup_private_config()
+
+    @staticmethod
+    def _config_value(value: str) -> str:
+        """Quote one value for a Net-SNMP config directive, rejecting line injection."""
+        if any(ch in value for ch in ("\r", "\n", "\0")):
+            raise SnmpError("SNMP credential contains an unsupported control character")
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    def _prepare_private_config(self) -> None:
+        """Write credentials to a private Net-SNMP config, never to process arguments."""
+        s = self.s
+        directives = []
+        if s.version in ("1", "2c"):
+            directives.append("defCommunity %s" % self._config_value(s.community))
+        else:
+            # Net-SNMP reads these directives from snmp.conf. Username, security
+            # level and protocol names are non-secret and remain argv options.
+            if s.v3_level != "noAuthNoPriv":
+                directives.append("defAuthPassphrase %s" % self._config_value(s.v3_auth_pass))
+            if s.v3_level == "authPriv":
+                directives.append("defPrivPassphrase %s" % self._config_value(s.v3_priv_pass))
+
+        directory = tempfile.mkdtemp(prefix="domoticz-syno-snmp-")
+        try:
+            os.chmod(directory, 0o700)
+            config_path = os.path.join(directory, "snmp.conf")
+            fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write("# Private credentials for Domoticz-Synology-SNMP; do not share.\n")
+                stream.write("\n".join(directives) + "\n")
+            os.chmod(config_path, 0o600)
+            env = os.environ.copy()
+            env["SNMPCONFPATH"] = directory
+            self._config_dir = directory
+            self._subprocess_env = env
+        except Exception:
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
+
+    def _cleanup_private_config(self) -> None:
+        directory = self._config_dir
+        self._config_dir = None
+        if directory:
+            shutil.rmtree(directory, ignore_errors=True)
+        self._subprocess_env = None
 
     # -- command line ----------------------------------------------------
     def transport(self) -> str:
@@ -115,11 +169,9 @@ class SnmpClient:
         if s.version == "3":
             argv += ["-l", s.v3_level, "-u", s.v3_user]
             if s.v3_level != "noAuthNoPriv":
-                argv += ["-a", s.v3_auth_proto, "-A", s.v3_auth_pass]
+                argv += ["-a", s.v3_auth_proto]
             if s.v3_level == "authPriv":
-                argv += ["-x", s.v3_priv_proto, "-X", s.v3_priv_pass]
-        else:
-            argv += ["-c", s.community]
+                argv += ["-x", s.v3_priv_proto]
         argv += ["-t", str(s.timeout), "-r", str(s.retries), "-On", "-Oe", "-m", ""]
         argv += list(extra)
         argv.append(self.transport())
@@ -133,9 +185,25 @@ class SnmpClient:
             raise SnmpError("client stopped")
         argv = self._argv(tool, extra, oids)
         self.calls += 1
-        rc, out, err = self._run(argv, wall_timeout)
+        if self._trace:
+            self._trace("SNMP request #%d: %s host=%s OIDs=%s" % (
+                self.calls, tool, self.s.host, ",".join(oids)))
+        try:
+            rc, out, err = self._run(argv, wall_timeout)
+        except Exception as exc:
+            if self._trace:
+                self._trace("SNMP request #%d failed: %s: %s" % (self.calls, type(exc).__name__, exc))
+            raise
         varbinds, others = snmpparse.parse_output(out)
         message = " | ".join([l for l in (err.strip().splitlines() + others) if l.strip()])
+        if self._trace:
+            if varbinds:
+                for vb in varbinds:
+                    self._trace("SNMP response #%d: %s %s=%s" % (self.calls, vb.type, vb.oid, vb.raw or vb.value))
+            if message:
+                self._trace("SNMP response #%d diagnostic: %s" % (self.calls, message))
+            if not varbinds and not message:
+                self._trace("SNMP response #%d: empty (exit=%d)" % (self.calls, rc))
         return varbinds, rc, message
 
     @staticmethod

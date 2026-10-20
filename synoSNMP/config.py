@@ -48,7 +48,8 @@ class Settings:
     v3_priv_pass: str = ""
     interval: int = 60               # seconds between polls
     level: int = LEVEL_FULL          # detail level, see LEVEL_*
-    debug: bool = False
+    debug: bool = False              # backwards-compatible: true for Debug or Trace
+    log_level: int = 1               # 1 normal, 2 debug, 3 trace
     timeout: int = 5                 # seconds per SNMP try
     retries: int = 1
     discovery_interval: int = 3600   # re-detect hardware this often (seconds)
@@ -79,7 +80,8 @@ class Settings:
             community=get("Mode1", "public") or "public",
             interval=_to_int(get("Mode4", "60") or "60", "Poll interval", MIN_INTERVAL, 86400),
             level=_to_int(get("Mode5", "3") or "3", "Detail level", 1, 3),
-            debug=get("Mode6", "Normal").lower() in ("debug", "true", "1"),
+            debug=get("Mode6", "Normal").lower() in ("debug", "trace", "true", "1", "3", "2"),
+            log_level={"normal": 1, "false": 1, "0": 1, "1": 1, "debug": 2, "true": 2, "2": 2, "trace": 3, "3": 3}.get(get("Mode6", "Normal").lower(), 1),
         )
 
         if version == "3":

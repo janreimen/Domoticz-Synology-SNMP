@@ -122,3 +122,21 @@ class DynamicHardwareTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TraceLoggingTests(unittest.TestCase):
+    def test_trace_reports_cycle_steps_and_each_collector(self):
+        from synoSNMP.config import Settings
+        from synoSNMP.engine import Engine
+        from fakeclient import FakeClient
+        events = []
+        client = FakeClient(mibdata.ds218())
+        engine = Engine(Settings(host="fake", level=3), client, trace=events.append)
+        result = engine.cycle()
+        joined = "\n".join(events)
+        self.assertTrue(result.readings)
+        self.assertIn("poll cycle started", joined)
+        self.assertIn("hardware discovery", joined)
+        self.assertIn("collector start:", joined)
+        self.assertIn("collector complete:", joined)
+        self.assertIn("poll cycle finished", joined)

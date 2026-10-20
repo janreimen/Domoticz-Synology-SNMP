@@ -14,4 +14,4 @@ Package layout (each module has exactly one job):
     collectors/     one module per hardware area (system, disks, network, ...)
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

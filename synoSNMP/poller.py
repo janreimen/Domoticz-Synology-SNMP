@@ -27,6 +27,7 @@ class Poller(threading.Thread):
             result = self.engine.cycle()
             self.results.put(result)
             if result.fatal:
+                self.engine.client.stop()
                 break
             self._halt.wait(max(1.0, self.interval - (time.monotonic() - started)))
 

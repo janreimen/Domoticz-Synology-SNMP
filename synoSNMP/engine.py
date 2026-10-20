@@ -45,10 +45,12 @@ class CycleResult:
 class Engine:
     def __init__(self, settings: Settings, client: SnmpClient,
                  collectors: Optional[Sequence[Collector]] = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 trace: Optional[Callable[[str], None]] = None) -> None:
         self.settings = settings
         self.client = client
         self.clock = clock
+        self._trace = trace
         self.ctx = Context(settings, clock)
         self.collectors: List[Collector] = list(collectors) if collectors is not None else build_collectors(self.ctx)
         self.info: Dict[str, str] = {}
@@ -61,9 +63,13 @@ class Engine:
         started = self.clock()
         calls_before = self.client.calls
         result = CycleResult()
+        self._log_trace("poll cycle started for %s:%d" % (self.settings.host, self.settings.port))
         try:
+            self._log_trace("step: connect / verify Synology identity")
             self._connect(result)
+            self._log_trace("step: hardware discovery")
             self._maybe_discover(result)
+            self._log_trace("step: collect readings")
             self._collect(result)
         except SnmpUnavailable as exc:
             result.fatal = True
@@ -85,6 +91,9 @@ class Engine:
         result.duration = self.clock() - started
         result.snmp_calls = self.client.calls - calls_before
         self._drain_notes(result)
+        self._log_trace("poll cycle finished: reachable=%s fatal=%s readings=%d groups=%s SNMP calls=%d duration=%.3fs" % (
+            result.reachable, result.fatal, len(result.readings),
+            ",".join(sorted(result.ran_groups)) or "none", result.snmp_calls, result.duration))
         return result
 
     def request_discovery(self) -> None:
@@ -93,8 +102,11 @@ class Engine:
     # -- steps ------------------------------------------------------------------------
     def _connect(self, result: CycleResult) -> None:
         if self._connected:
+            self._log_trace("connection check skipped: session already marked connected")
             return
+        self._log_trace("requesting system description, model, DSM version and serial OIDs")
         got = self.client.get_many([oids.SYS_DESCR, oids.SYS_MODEL, oids.SYS_VERSION, oids.SYS_SERIAL])
+        self._log_trace("identity request returned %d OID values" % len(got))
         if not got:
             raise SnmpError("the agent answered but returned no data (SNMP view too restrictive?)")
         model = got.get(oids.SYS_MODEL)
@@ -120,30 +132,43 @@ class Engine:
         if not due:
             return
         self._last_discovery = now
+        self._log_trace("discovery due (first run or interval %.0fs elapsed)" % self.settings.discovery_interval)
         for c in self.collectors:
+            self._log_trace("discovery start: collector=%s groups=%s" % (c.name, ",".join(c.groups) or "none"))
             try:
                 c.discover(self.client)
+                self._log_trace("discovery complete: collector=%s" % c.name)
             except (SnmpTimeout, SnmpUnavailable):
+                self._log_trace("discovery aborted by SNMP transport failure: collector=%s" % c.name)
                 raise
             except Exception as exc:                       # collect() will retry discovery lazily
+                self._log_trace("discovery exception: collector=%s error=%s: %s" % (c.name, type(exc).__name__, exc))
                 result.messages.append(("debug", "%s discovery failed: %s" % (c.name, exc)))
 
     def _collect(self, result: CycleResult) -> None:
         now = self.clock()
         for c in self.collectors:
             if c.interval and c.last_run is not None and now - c.last_run < c.interval:
+                self._log_trace("collector skipped: %s interval not elapsed (%.1fs / %.1fs)" % (
+                    c.name, now - c.last_run, c.interval))
                 continue
+            self._log_trace("collector start: %s" % c.name)
             try:
                 readings = c.collect(self.client)
             except (SnmpTimeout, SnmpUnavailable):
+                self._log_trace("collector aborted by SNMP transport failure: %s" % c.name)
                 raise
             except SnmpError as exc:
+                self._log_trace("collector SNMP exception: %s: %s" % (c.name, exc))
                 self._problem(result, c.name, "%s: SNMP error: %s" % (c.name, exc))
                 continue
             except Exception as exc:
+                self._log_trace("collector exception: %s: %s: %s" % (c.name, type(exc).__name__, exc))
                 self._problem(result, c.name, "%s: unexpected error: %s: %s" % (c.name, type(exc).__name__, exc))
                 continue
             c.last_run = now
+            self._log_trace("collector complete: %s readings=%d groups=%s" % (
+                c.name, len(readings), ",".join(c.groups) or "none"))
             self._resolved(c.name, result, "%s: working again" % c.name)
             result.readings.extend(readings)
             result.ran_groups.update(c.groups)
@@ -165,6 +190,10 @@ class Engine:
             self.ctx.rates.forget_all()
         self._connected = False
         self._problem(result, "link", text)
+
+    def _log_trace(self, text: str) -> None:
+        if self._trace is not None:
+            self._trace(text)
 
     def _drain_notes(self, result: CycleResult) -> None:
         for note in self.ctx.notes:

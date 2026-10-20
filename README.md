@@ -11,7 +11,7 @@ A [Domoticz](https://www.domoticz.com) plugin that monitors a **Synology NAS** t
 * **Modular.** Parser, SNMP client, one collector per hardware area, engine and Domoticz glue are separate modules.
   A new area is one new file.
 
-> **Status:** version 0.2.0. Developed and tested against simulated DS920+ / DS218+ data and a real `snmpd`
+> **Status:** version 0.2.1. Developed and tested against simulated DS920+ / DS218+ data and a real `snmpd`
 > serving it, **not yet against a real DSM**. Please read [what is verified and what is not](#what-is-verified-and-what-is-not)
 > and run the check in [First run](#first-run-check-what-your-nas-reports) on your NAS before relying on it.
 
@@ -80,7 +80,7 @@ Full instructions, updates, rollback and removal: **[DEPLOY.md](DEPLOY.md)**.
 | SNMPv3 options | `level;authProtocol;privProtocol;privPassphrase`, for example `authPriv;SHA;AES;`. Level: `noAuthNoPriv`, `authNoPriv`, `authPriv`. Auth: MD5, SHA, SHA-224/256/384/512. Privacy: DES, AES, AES-192, AES-256. An empty privacy passphrase re-uses the authentication passphrase |
 | Poll interval | seconds between polls, minimum 10, default 60 |
 | Detail level | Basic / Standard / Full, see below. Default Full |
-| Debug | verbose log: what was detected, how many SNMP calls a poll took and how long |
+| Logging level | **Normal**: start/stop, timeouts and critical errors. **Debug**: startup, NAS identity, recoveries, poll summary and approximate time until the next poll. **Trace**: full internal execution path, including poll-cycle steps, collector discovery/start/skip/result/error decisions, every SNMP request/response, reading and device decisions, heartbeat callbacks, and poll scheduling. SNMP credentials are never logged. |
 
 Run several NAS units by adding the hardware once per NAS. Each gets its own set of devices.
 
@@ -195,7 +195,7 @@ reads, which is all that is needed to reproduce the problem offline. Remove seri
 | A rate device shows nothing | rates need two samples: wait one poll interval |
 | Everything is "timed out" after a NAS reboot | expected while it is down; values resume on their own |
 
-More on a specific symptom: set *Debug* to *Debug*; every poll then logs its SNMP call count and duration.
+More on a specific symptom: set *Logging level* to *Debug* for a concise poll summary, or *Trace* to inspect individual SNMP requests/responses and device updates.
 
 ## FAQ
 
@@ -249,9 +249,11 @@ against a Domoticz stub, the real `plugin.py` loaded the way Domoticz loads it (
 **Not covered:** iSCSI LUNs, NFS / SMB latency, high-availability clusters, per-share quotas, Docker container
 statistics.
 
-**Security note:** the community or the SNMPv3 passphrases are passed to `snmpget` on the command line, so they are
-visible to other local users in the process list while a request runs. On a shared host use an SNMPv3 user with a
-read-only view and restrict SNMP on the NAS to the Domoticz host. See [SECURITY.md](SECURITY.md).
+**Security note (0.2.1):** the plugin no longer passes the community string or SNMPv3 passphrases in net-snmp
+process arguments. It writes them to a private temporary `snmp.conf` under a `0700` directory, with the file set to
+`0600`, and removes the temporary configuration when the client stops. This reduces exposure in process listings;
+it does not protect credentials stored in Domoticz settings or encrypt SNMPv1/v2c traffic. Prefer SNMPv3 `authPriv`
+and restrict UDP 161 to the Domoticz host. See [SECURITY.md](SECURITY.md).
 
 ## Development
 

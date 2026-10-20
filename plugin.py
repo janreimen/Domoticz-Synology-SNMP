@@ -1,5 +1,5 @@
 """
-<plugin key="SynologySNMP" name="Synology NAS (net-snmp)" author="janreimen" version="0.2.0">
+<plugin key="SynologySNMP" name="Synology NAS (net-snmp)" author="janreimen" version="0.2.1">
     <description>
         <h2>Synology NAS monitor</h2><br/>
         Reads a Synology NAS through the native net-snmp command line tools (snmpget / snmpbulkwalk).
@@ -38,10 +38,11 @@
                 <option label="Full" value="3" default="true"/>
             </options>
         </param>
-        <param field="Mode6" label="Debug" width="75px">
+        <param field="Mode6" label="Logging level" width="100px">
             <options>
                 <option label="Normal" value="Normal" default="true"/>
                 <option label="Debug" value="Debug"/>
+                <option label="Trace" value="Trace"/>
             </options>
         </param>
     </params>
@@ -83,26 +84,37 @@ class BasePlugin:
         except syno_config.SettingsError as exc:
             Domoticz.Error("Configuration error: %s" % exc)
             return
-        if self.settings.debug:
-            Domoticz.Debugging(1)
-        Domoticz.Log("Synology SNMP plugin %s starting for %s (SNMP v%s, every %ds, detail level %d)" % (
-            __version__, self.settings.host, self.settings.version, self.settings.interval, self.settings.level))
+        # Domoticz.Debug output is reserved for Trace, so changing from Trace
+        # back to Normal/Debug cannot leave per-device messages enabled.
+        Domoticz.Debugging(1 if self.settings.log_level >= 3 else 0)
+        if self.settings.log_level >= 2:
+            Domoticz.Log("Synology SNMP plugin %s starting for %s (SNMP v%s, every %ds, detail level %d, logging %s)" % (
+                __version__, self.settings.host, self.settings.version, self.settings.interval, self.settings.level,
+                ("Debug" if self.settings.log_level == 2 else "Trace")))
+        else:
+            Domoticz.Log("Synology SNMP plugin %s starting" % __version__)
 
         try:
-            client = SnmpClient(self.settings)
+            client = SnmpClient(self.settings, trace=self._trace if self.settings.log_level >= 3 else None)
         except SnmpUnavailable as exc:
             Domoticz.Error(str(exc))
             return
 
         self.manager = DeviceManager(Domoticz, lambda: Devices, self.settings.refresh_interval)
         self.manager.sync()
-        self.poller = Poller(Engine(self.settings, client), self.settings.interval)
+        if self.settings.log_level >= 3:
+            self._trace("device manager synchronized: %d existing device units" % len(Devices))
+        self.poller = Poller(Engine(self.settings, client,
+                                    trace=self._trace if self.settings.log_level >= 3 else None),
+                             self.settings.interval)
         self.poller.start()
         Domoticz.Heartbeat(HEARTBEAT_SECONDS)
 
     def onHeartbeat(self):
         if self.poller is None:
             return
+        if self.settings and self.settings.log_level >= 3:
+            Domoticz.Debug("TRACE: Domoticz heartbeat received; poll interval=%ds" % self.settings.interval)
         latest = None
         while True:
             try:
@@ -112,7 +124,13 @@ class BasePlugin:
             self._log(result)
             latest = result
         if latest is None:
+            if self.settings and self.settings.log_level >= 3:
+                Domoticz.Debug("TRACE: no completed poll result queued on this heartbeat")
             return
+        if self.settings and self.settings.log_level >= 3:
+            Domoticz.Debug("TRACE: applying poll result: reachable=%s fatal=%s readings=%d present_keys=%d ran_groups=%s" % (
+                latest.reachable, latest.fatal, len(latest.readings), len(latest.present_keys),
+                ",".join(sorted(latest.ran_groups)) or "none"))
         if not latest.reachable:
             self.manager.mark_all_timed_out()
         self.manager.apply(latest)
@@ -122,6 +140,8 @@ class BasePlugin:
 
     def onStop(self):
         if self.poller is not None:
+            if self.settings and self.settings.log_level >= 3:
+                self._trace("stop requested; stopping SNMP poller and cleaning private configuration")
             self.poller.stop()
             self.poller.join(STOP_TIMEOUT)
             if self.poller.is_alive():
@@ -129,18 +149,32 @@ class BasePlugin:
             self.poller = None
         Domoticz.Log("Synology SNMP plugin stopped")
 
-    # -- helpers -------------------------------------------------------------------------------
-    @staticmethod
-    def _log(result):
+    def _trace(self, text):
+        # Trace output is deliberately routed through one gate. Never pass argv or
+        # private SNMP configuration content here: it can contain authentication data.
+        if self.settings and self.settings.log_level >= 3:
+            Domoticz.Debug("TRACE: " + text)
+
+    def _log(self, result):
+        level_setting = self.settings.log_level if self.settings else 1
         for level, text in result.messages:
+            is_timeout = "timeout" in text.lower() or "no snmp answer" in text.lower() or "no response" in text.lower()
             if level == "error":
-                Domoticz.Error(text)
+                # Errors remain visible at every level; timeouts are the only routine
+                # polling messages allowed at Normal level.
+                if level_setting >= 2 or is_timeout or result.fatal:
+                    Domoticz.Error(text)
             elif level == "info":
-                Domoticz.Log(text)
-            else:
-                Domoticz.Debug(text)
-        Domoticz.Debug("Poll: %d readings, %d SNMP calls, %.2fs" % (
-            len(result.readings), result.snmp_calls, result.duration))
+                if level_setting >= 2:
+                    Domoticz.Log(text)
+            elif level_setting >= 3:
+                Domoticz.Debug("TRACE: " + text)
+        if level_setting >= 2:
+            next_poll = max(1, int(round(self.settings.interval - result.duration)))
+            Domoticz.Log("Poll complete: %d readings, %d SNMP calls, %.2fs; next poll in about %ds" % (
+                len(result.readings), result.snmp_calls, result.duration, next_poll))
+        if level_setting >= 3:
+            Domoticz.Debug("TRACE: poll result contains %d readings" % len(result.readings))
 
 
 _plugin = BasePlugin()

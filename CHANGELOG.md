@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format follows
 (`MAJOR.MINOR.PATCH`, optionally a fourth `.N` for small fixes) so that release tags work with plugin managers
 such as PyPluginStore.
 
+## [0.2.1] - 2026-10-20
+
+### Security
+- Removed SNMP community strings and SNMPv3 authentication/privacy passphrases from net-snmp process arguments.
+- Store credentials in a temporary, isolated Net-SNMP configuration directory with directory mode `0700` and config-file mode `0600`.
+- Clean up the private configuration when the client stops; reject newline, carriage-return and NUL characters in config values to prevent directive injection.
+- Preserve SNMPv1, v2c, and v3 security-level/protocol selection.
+
+### Changed
+- Added three logging levels: Normal (start/stop, timeouts and critical errors), Debug (operational status and concise poll/next-poll summary), and Trace (full execution path: poll-cycle steps, discovery and collector start/skip/result/error details, SNMP requests/responses, reading/device decisions, heartbeat callbacks, and poll scheduling).
+- Trace logging never prints SNMP community strings or SNMPv3 passphrases.
+
+### Tests
+- Added regression coverage for secret-free command arguments, private configuration permissions, cleanup, config-value injection, logging-level parsing and SNMP trace output.
+
 ## [0.2.0] - 2026-10-11
 
 ### Added
@@ -56,6 +71,7 @@ Complete rewrite of the old pysnmp-based *Synology Monitor* plugin.
   logged once, and their recovery once.
 - Modular code: parser, client, collectors, engine, device layer and plugin glue are separate modules.
 
+[0.2.1]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.1
 [0.2.0]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.0
 [0.1.1]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.1.1
 [0.1.0]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.1.0

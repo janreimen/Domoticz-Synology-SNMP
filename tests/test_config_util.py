@@ -22,6 +22,13 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(s.debug)
         self.assertEqual(s.level, 1)
 
+    def test_logging_levels(self):
+        self.assertEqual(Settings.from_parameters(self.params(Mode6="Normal")).log_level, 1)
+        self.assertEqual(Settings.from_parameters(self.params(Mode6="Debug")).log_level, 2)
+        trace = Settings.from_parameters(self.params(Mode6="Trace"))
+        self.assertEqual(trace.log_level, 3)
+        self.assertTrue(trace.debug)
+
     def test_rejects_bad_values(self):
         for bad in ({"Address": ""}, {"Port": "99999"}, {"Mode4": "2"}, {"Mode4": "abc"}, {"Mode5": "7"}, {"Mode2": "4"}):
             with self.assertRaises(SettingsError, msg=str(bad)):

@@ -92,32 +92,35 @@ def main(argv: Optional[List[str]] = None, out: TextIO = sys.stdout, err: TextIO
         err.write("%s\n" % exc)
         return 1
 
-    engine = Engine(settings, client)
-    result = engine.cycle()
-    if args.rates and result.reachable and not result.fatal:
-        sleep(args.rates)
-        again = engine.cycle()
-        again.messages = result.messages + again.messages
-        result = again
+    try:
+        engine = Engine(settings, client)
+        result = engine.cycle()
+        if args.rates and result.reachable and not result.fatal:
+            sleep(args.rates)
+            again = engine.cycle()
+            again.messages = result.messages + again.messages
+            result = again
 
-    for level, text in result.messages:
-        if level == "error" or (level == "debug" and args.debug):
-            err.write("%s: %s\n" % (level.upper(), text))
-    if result.fatal or not result.readings:
-        if not result.messages:
-            err.write("No data.\n")
-        if result.not_synology:
-            return 3
-        if result.fatal:
-            return 1
-        return 2 if not result.reachable else 1
+        for level, text in result.messages:
+            if level == "error" or (level == "debug" and args.debug):
+                err.write("%s: %s\n" % (level.upper(), text))
+        if result.fatal or not result.readings:
+            if not result.messages:
+                err.write("No data.\n")
+            if result.not_synology:
+                return 3
+            if result.fatal:
+                return 1
+            return 2 if not result.reachable else 1
 
-    if args.json:
-        json.dump({"model": engine.info.get("model"), "version": engine.info.get("version"),
-                   "devices": [{"key": r.key, "name": r.name, "kind": r.kind, "value": r.svalue, "level": r.nvalue,
-                                "unit": r.unit, "visible": r.used, "pending": r.pending} for r in result.readings]},
-                  out, indent=2)
-        out.write("\n")
-    else:
-        render(result, engine.info, out)
-    return 0
+        if args.json:
+            json.dump({"model": engine.info.get("model"), "version": engine.info.get("version"),
+                       "devices": [{"key": r.key, "name": r.name, "kind": r.kind, "value": r.svalue, "level": r.nvalue,
+                                    "unit": r.unit, "visible": r.used, "pending": r.pending} for r in result.readings]},
+                      out, indent=2)
+            out.write("\n")
+        else:
+            render(result, engine.info, out)
+        return 0
+    finally:
+        client.stop()

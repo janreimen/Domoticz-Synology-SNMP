@@ -54,7 +54,10 @@ class DeviceManager:
     def apply(self, result: CycleResult) -> None:
         now = self.clock()
         for reading in result.readings:
+            self.dz.Debug("Reading %s [%s]: nValue=%d sValue=%r pending=%s" % (
+                reading.name, reading.key, reading.nvalue, reading.svalue, reading.pending))
             if reading.pending:
+                self.dz.Debug("Skipped pending reading %s [%s]" % (reading.name, reading.key))
                 continue
             unit = self._units.get(reading.key) or self._create(reading)
             if unit is not None:
@@ -118,11 +121,13 @@ class DeviceManager:
             if group_of(key) in result.ran_groups and key not in result.present_keys:
                 self._set_timeout(devices.get(unit), 1)
 
-    @staticmethod
-    def _set_timeout(dev: Any, flag: int) -> None:
+    def _set_timeout(self, dev: Any, flag: int) -> None:
         if dev is None or bool(getattr(dev, "TimedOut", 0)) == bool(flag):
             return
         try:
             dev.Update(nValue=dev.nValue, sValue=dev.sValue, TimedOut=flag)
         except TypeError:
             pass
+        self.dz.Debug("%s device %s: %s" % (
+            "Timed out" if flag else "Recovered", getattr(dev, "Name", "unknown"),
+            getattr(dev, "DeviceID", "")))
