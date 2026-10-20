@@ -106,6 +106,8 @@ class DeviceManager:
         stale = now - self._written.get(r.key, 0.0) >= self.refresh_interval
         timed_out = bool(getattr(dev, "TimedOut", 0))
         if not (changed or stale or timed_out):
+            self.dz.Debug("TRACE: unchanged sensor %s [%s]; Domoticz update skipped (nValue=%d sValue=%r)" % (
+                r.name, r.key, r.nvalue, r.svalue))
             return
         try:
             dev.Update(nValue=r.nvalue, sValue=r.svalue, TimedOut=0)
@@ -113,7 +115,11 @@ class DeviceManager:
             dev.Update(nValue=r.nvalue, sValue=r.svalue)
         self._written[r.key] = now
         if changed:
-            self.dz.Debug("Update %s: %d '%s'" % (r.name, r.nvalue, r.svalue))
+            self.dz.Debug("TRACE: Domoticz update sent: %s [%s] unit=%d nValue=%d sValue=%r changed=%s refreshed=%s recovered=%s" % (
+                r.name, r.key, unit, r.nvalue, r.svalue, changed, stale, timed_out))
+        else:
+            self.dz.Debug("TRACE: Domoticz refresh sent: %s [%s] unit=%d nValue=%d sValue=%r changed=%s refreshed=%s recovered=%s" % (
+                r.name, r.key, unit, r.nvalue, r.svalue, changed, stale, timed_out))
 
     def _time_out_missing(self, result: CycleResult) -> None:
         devices = self.get_devices()

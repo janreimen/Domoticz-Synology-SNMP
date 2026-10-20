@@ -49,6 +49,7 @@
 </plugin>
 """
 import os
+import queue
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -76,6 +77,9 @@ class BasePlugin:
         self.poller = None
         self.manager = None
         self.settings = None
+        # Engine/SNMP tracing runs on the poller thread. Queue it and emit it from
+        # Domoticz callbacks instead of calling Domoticz APIs from a worker thread.
+        self._trace_queue = queue.Queue()
 
     # -- Domoticz callbacks ------------------------------------------------------------
     def onStart(self):
@@ -111,6 +115,15 @@ class BasePlugin:
         Domoticz.Heartbeat(HEARTBEAT_SECONDS)
 
     def onHeartbeat(self):
+        # Drain trace events first, even if the poll cycle has not completed yet.
+        # This makes slow SNMP requests visible while they are in progress.
+        if self.settings and self.settings.log_level >= 3:
+            while True:
+                try:
+                    message = self._trace_queue.get_nowait()
+                except queue.Empty:
+                    break
+                Domoticz.Debug("TRACE: " + message)
         if self.poller is None:
             return
         if self.settings and self.settings.log_level >= 3:
@@ -150,10 +163,11 @@ class BasePlugin:
         Domoticz.Log("Synology SNMP plugin stopped")
 
     def _trace(self, text):
-        # Trace output is deliberately routed through one gate. Never pass argv or
-        # private SNMP configuration content here: it can contain authentication data.
+        # Engine and SNMP tracing runs on the poller thread. Do not call Domoticz
+        # APIs from that thread: queue messages for onHeartbeat() to emit safely.
+        # Never pass argv or private SNMP configuration content here.
         if self.settings and self.settings.log_level >= 3:
-            Domoticz.Debug("TRACE: " + text)
+            self._trace_queue.put(text)
 
     def _log(self, result):
         level_setting = self.settings.log_level if self.settings else 1

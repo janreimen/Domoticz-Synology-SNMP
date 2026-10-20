@@ -139,4 +139,6 @@ class TraceLoggingTests(unittest.TestCase):
         self.assertIn("hardware discovery", joined)
         self.assertIn("collector start:", joined)
         self.assertIn("collector complete:", joined)
+        self.assertIn("sensor collected:", joined)
+        self.assertIn("sValue=", joined)
         self.assertIn("poll cycle finished", joined)

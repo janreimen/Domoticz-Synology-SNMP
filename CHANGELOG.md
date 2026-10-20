@@ -15,6 +15,8 @@ such as PyPluginStore.
 
 ### Changed
 - Added three logging levels: Normal (start/stop, timeouts and critical errors), Debug (operational status and concise poll/next-poll summary), and Trace (full execution path: poll-cycle steps, discovery and collector start/skip/result/error details, SNMP requests/responses, reading/device decisions, heartbeat callbacks, and poll scheduling).
+- Trace now logs each collected sensor's name, stable key, type, nValue, sValue, unit, visibility and pending status, plus whether the value was sent to Domoticz, refreshed, skipped as unchanged, or timed out/recovered.
+- Poller-thread trace events are queued and emitted from Domoticz heartbeat callbacks rather than calling Domoticz logging APIs from the worker thread. This also makes slow SNMP requests visible before a poll cycle completes.
 - Trace logging never prints SNMP community strings or SNMPv3 passphrases.
 
 ### Tests

@@ -169,6 +169,13 @@ class Engine:
             c.last_run = now
             self._log_trace("collector complete: %s readings=%d groups=%s" % (
                 c.name, len(readings), ",".join(c.groups) or "none"))
+            # Full Trace must show the actual sensor values produced by each
+            # collector, not only the lower-level SNMP responses.
+            for reading in readings:
+                self._log_trace(
+                    "sensor collected: name=%r key=%s kind=%s nValue=%d sValue=%r unit=%r used=%s pending=%s" % (
+                        reading.name, reading.key, reading.kind, reading.nvalue,
+                        reading.svalue, reading.unit, reading.used, reading.pending))
             self._resolved(c.name, result, "%s: working again" % c.name)
             result.readings.extend(readings)
             result.ran_groups.update(c.groups)
