@@ -54,7 +54,6 @@ class CommandLineTests(unittest.TestCase):
 
 
     def test_trace_logs_requests_and_results_without_credentials(self):
-        from synoSNMP.snmpparse import Varbind, INTEGER
         logs = []
         def runner(argv, timeout):
             return 0, ".1.3.6.1.2.1.1.3.0 = INTEGER: 42\n", ""
