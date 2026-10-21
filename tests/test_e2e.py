@@ -113,7 +113,7 @@ class PluginTests(unittest.TestCase):
         sys.modules.pop("plugin", None)
         plugin = importlib.import_module("plugin")
         plugin.Parameters = {"Address": "127.0.0.1", "Port": str(self.snmpd.port), "Mode1": "public", "Mode2": "2c",
-                             "Mode4": "10", "Mode5": "3", "Mode6": "Normal"}
+                             "Mode4": "10", "Mode5": "3", "Mode6": "Trace"}
         plugin.Parameters.update(params)
         plugin.Devices = dz.Devices
         # Domoticz injects these four globals into the plugin module; the real `Settings` is a dict of
