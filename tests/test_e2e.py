@@ -143,7 +143,7 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(ids["disk.drive2.temp"].sValue, "36.0")
         self.assertEqual(ids["disk.drive2.temp"].TypeName, "Temperature")
         self.assertGreater(len(dz.Devices), 30)
-        self.assertTrue(any(l == "log" and "Connected to Synology DS920+" in t for l, t in dz.logs))
+        self.assertTrue(any(l == "Trace" and "Connected to Synology DS920+" in t for l, t in dz.logs))
         self.assertTrue(any(l == "heartbeat" for l, _ in dz.logs))
         self.assertFalse(plugin._plugin.poller)                             # poller thread joined
 
