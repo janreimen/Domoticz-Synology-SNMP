@@ -143,8 +143,12 @@ class Engine:
         self._resolved("link", result, "SNMP connection restored")
         self._resolved("snmp", result, None)
         self._resolved("engine", result, None)
-        result.messages.append(("info", "Connected to Synology %s%s" % (
-            self.info["model"], (" (%s)" % self.info["version"]) if self.info["version"] else "")))
+        connected_message = "Connected to Synology %s%s" % (
+            self.info["model"], (" (%s)" % self.info["version"]) if self.info["version"] else "")
+        result.messages.append(("info", connected_message))
+        # Connection identity is especially useful during initial diagnosis. Keep
+        # it in Trace output as well as the concise operational info message.
+        self._log_trace(connected_message)
         serial = got.get(oids.SYS_SERIAL)
         if serial:
             result.messages.append(("debug", "Serial number: %s" % serial.as_text()))

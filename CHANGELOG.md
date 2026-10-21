@@ -13,6 +13,11 @@
 - Cached readings remain available between scheduled collections, without being counted as fresh hardware-presence evidence.
 - Updated the hardware description and README with the schedule variables and collector-to-sensor mapping.
 
+### Fixed
+- Trace logging now includes the successful Synology identity check, including the detected model and DSM version.
+- Updated the real-net-snmp chunking test to use more than the configured maximum number of distinct OIDs. Duplicate OIDs are intentionally deduplicated before chunking and must not be used to force extra subprocess calls.
+- The plugin end-to-end test explicitly enables Trace logging before asserting that the connection identity appears in Trace output.
+
 ### Notes
 - Settings follow existing collector boundaries. Readings bundled by a collector (for example uptime with CPU/memory, and DSM update status with system health) share that collector's interval.
 - Real DS1525+ hardware validation remains outstanding.

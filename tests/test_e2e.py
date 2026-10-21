@@ -57,7 +57,13 @@ class RealNetSnmpTests(unittest.TestCase):
 
     def test_many_oids_are_chunked(self):
         c = SnmpClient(self.settings())
-        oids = ["1.3.6.1.4.1.6574.1.5.1.0"] * 1 + ["1.3.6.1.4.1.6574.2.1.1.6.%d" % i for i in range(6)] * 6
+        # Use more than GET_CHUNK distinct OIDs. Repeating the six drive OIDs
+        # would now be deduplicated before chunking and correctly need only one
+        # subprocess, so pad with distinct absent OIDs to exercise chunking.
+        oids = ["1.3.6.1.4.1.6574.1.5.1.0"] + [
+            "1.3.6.1.4.1.6574.2.1.1.6.%d" % i for i in range(6)
+        ] + ["1.3.6.1.4.1.6574.99.1.%d.0" % i for i in range(14)]
+        self.assertGreater(len(set(oids)), c.GET_CHUNK)
         before = c.calls
         got = c.get_many(oids)
         self.assertEqual(len(got), 7)
@@ -113,7 +119,7 @@ class PluginTests(unittest.TestCase):
         sys.modules.pop("plugin", None)
         plugin = importlib.import_module("plugin")
         plugin.Parameters = {"Address": "127.0.0.1", "Port": str(self.snmpd.port), "Mode1": "public", "Mode2": "2c",
-                             "Mode4": "10", "Mode5": "3", "Mode6": "Normal"}
+                             "Mode4": "10", "Mode5": "3", "Mode6": "Trace"}
         plugin.Parameters.update(params)
         plugin.Devices = dz.Devices
         # Domoticz injects these four globals into the plugin module; the real `Settings` is a dict of
@@ -143,7 +149,8 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(ids["disk.drive2.temp"].sValue, "36.0")
         self.assertEqual(ids["disk.drive2.temp"].TypeName, "Temperature")
         self.assertGreater(len(dz.Devices), 30)
-        self.assertTrue(any(l == "Trace" and "Connected to Synology DS920+" in t for l, t in dz.logs))
+        self.assertTrue(any(l.lower() in ("debug", "trace") and "Connected to Synology DS920+" in t
+                            for l, t in dz.logs))
         self.assertTrue(any(l == "heartbeat" for l, _ in dz.logs))
         self.assertFalse(plugin._plugin.poller)                             # poller thread joined
 

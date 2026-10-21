@@ -192,6 +192,7 @@ class TraceLoggingTests(unittest.TestCase):
         joined = "\n".join(events)
         self.assertTrue(result.readings)
         self.assertIn("poll cycle started", joined)
+        self.assertIn("Connected to Synology DS218", joined)
         self.assertIn("hardware discovery", joined)
         self.assertIn("collector start:", joined)
         self.assertIn("collector complete:", joined)
