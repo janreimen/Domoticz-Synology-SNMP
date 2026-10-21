@@ -53,6 +53,18 @@ class Engine:
         self._trace = trace
         self.ctx = Context(settings, clock)
         self.collectors: List[Collector] = list(collectors) if collectors is not None else build_collectors(self.ctx)
+        # Each collector has its own schedule from .env. Directly-created Settings
+        # objects retain the old slow_interval behavior for compatibility with tests
+        # and downstream integrations that instantiate Engine themselves.
+        self._reading_cache: Dict[str, List[Reading]] = {}
+        configured = settings.collector_intervals
+        for collector in self.collectors:
+            if configured is not None and collector.name in configured:
+                collector.interval = configured[collector.name]
+            elif collector.name == "smart":
+                collector.interval = settings.slow_interval
+            elif collector.name in {"disks", "raid", "mounts", "ebox", "flashcache", "gpu"}:
+                collector.interval = settings.slow_interval
         self.info: Dict[str, str] = {}
         self._connected = False
         self._last_discovery: Optional[float] = None
@@ -86,8 +98,19 @@ class Engine:
                 result.not_synology = True
         except Exception as exc:                          # a bug must never kill the poller thread
             self._problem(result, "engine", "Unexpected error: %s: %s" % (type(exc).__name__, exc))
+        if not result.reachable:
+            # Never replay cached or partial readings after a transport outage: the
+            # plugin marks all devices timed out, and applying stale readings after
+            # that would immediately mark some of them healthy again.
+            if result.readings:
+                self._log_trace("discarding %d partial/cached readings because NAS is unreachable" % len(result.readings))
+            result.readings.clear()
+            result.present_keys.clear()
+            result.ran_groups.clear()
         result.info = dict(self.info)
-        result.present_keys = {r.key for r in result.readings}
+        # present_keys intentionally contains only fresh readings from collectors
+        # that ran successfully. Cached readings refresh Domoticz values, but must
+        # not hide a device that disappeared when its owning collector next runs.
         result.duration = self.clock() - started
         result.snmp_calls = self.client.calls - calls_before
         self._drain_notes(result)
@@ -148,9 +171,12 @@ class Engine:
     def _collect(self, result: CycleResult) -> None:
         now = self.clock()
         for c in self.collectors:
-            if c.interval and c.last_run is not None and now - c.last_run < c.interval:
-                self._log_trace("collector skipped: %s interval not elapsed (%.1fs / %.1fs)" % (
-                    c.name, now - c.last_run, c.interval))
+            due_in = (now - c.last_run) if c.last_run is not None else None
+            if c.interval and c.last_run is not None and due_in < c.interval:
+                cached = self._reading_cache.get(c.name, [])
+                self._log_trace("collector skipped: %s schedule not due (%.1fs / %.1fs); reusing %d cached readings" % (
+                    c.name, due_in, c.interval, len(cached)))
+                result.readings.extend(cached)
                 continue
             self._log_trace("collector start: %s" % c.name)
             try:
@@ -161,12 +187,15 @@ class Engine:
             except SnmpError as exc:
                 self._log_trace("collector SNMP exception: %s: %s" % (c.name, exc))
                 self._problem(result, c.name, "%s: SNMP error: %s" % (c.name, exc))
+                result.readings.extend(self._reading_cache.get(c.name, []))
                 continue
             except Exception as exc:
                 self._log_trace("collector exception: %s: %s: %s" % (c.name, type(exc).__name__, exc))
                 self._problem(result, c.name, "%s: unexpected error: %s: %s" % (c.name, type(exc).__name__, exc))
+                result.readings.extend(self._reading_cache.get(c.name, []))
                 continue
             c.last_run = now
+            self._reading_cache[c.name] = list(readings)
             self._log_trace("collector complete: %s readings=%d groups=%s" % (
                 c.name, len(readings), ",".join(c.groups) or "none"))
             # Full Trace must show the actual sensor values produced by each
@@ -176,6 +205,7 @@ class Engine:
                     "sensor collected: name=%r key=%s kind=%s nValue=%d sValue=%r unit=%r used=%s pending=%s" % (
                         reading.name, reading.key, reading.kind, reading.nvalue,
                         reading.svalue, reading.unit, reading.used, reading.pending))
+                result.present_keys.add(reading.key)
             self._resolved(c.name, result, "%s: working again" % c.name)
             result.readings.extend(readings)
             result.ran_groups.update(c.groups)

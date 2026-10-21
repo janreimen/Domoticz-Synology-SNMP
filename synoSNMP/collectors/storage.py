@@ -64,7 +64,7 @@ class MountCollector(Collector):
     """Used percentage and free space of mounted volumes (HOST-RESOURCES-MIB).
 
     hrStorage row indexes are assigned dynamically and can shift (for example
-    when Docker mounts something), so every poll also reads the description of
+    when Docker mounts something), so each scheduled collection also reads the description of
     each tracked row and re-runs discovery immediately if one no longer matches.
     """
 

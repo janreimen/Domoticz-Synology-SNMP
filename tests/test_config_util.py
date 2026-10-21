@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 
 from helpers import mibdata  # noqa: F401  (sets sys.path)
@@ -8,14 +10,17 @@ from synoSNMP.util import RateCalc, make_key, slug, pct, human_bytes
 class SettingsTests(unittest.TestCase):
     def params(self, **kw):
         p = {"Address": "192.168.1.10", "Port": "161", "Mode1": "public", "Mode2": "2c",
-             "Mode4": "60", "Mode5": "3", "Mode6": "Normal"}
+             "Mode5": "3", "Mode6": "Normal"}
         p.update(kw)
         return p
 
     def test_defaults_from_manifest(self):
         s = Settings.from_parameters(self.params())
-        self.assertEqual((s.host, s.port, s.version, s.community, s.interval, s.level, s.debug),
-                         ("192.168.1.10", 161, "2c", "public", 60, 3, False))
+        self.assertEqual((s.host, s.port, s.version, s.community, s.interval, s.slow_interval, s.level, s.debug),
+                         ("192.168.1.10", 161, "2c", "public", 60, 3600, 3, False))
+        self.assertEqual(s.collector_intervals["disks"], 300)
+        self.assertEqual(s.collector_intervals["mounts"], 600)
+        self.assertEqual(s.collector_intervals["smart"], 3600)
 
     def test_debug_and_level(self):
         s = Settings.from_parameters(self.params(Mode6="Debug", Mode5="1"))
@@ -30,9 +35,25 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(trace.debug)
 
     def test_rejects_bad_values(self):
-        for bad in ({"Address": ""}, {"Port": "99999"}, {"Mode4": "2"}, {"Mode4": "abc"}, {"Mode5": "7"}, {"Mode2": "4"}):
+        for bad in ({"Address": ""}, {"Port": "99999"}, {"Mode5": "7"}, {"Mode2": "4"}):
             with self.assertRaises(SettingsError, msg=str(bad)):
                 Settings.from_parameters(self.params(**bad))
+
+
+    def test_env_schedule_overrides_defaults_and_validates_values(self):
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as env:
+            env.write("SYSTEM_INTERVAL=45\nSMART_INTERVAL=7200\nUNKNOWN_SETTING=123\n")
+            env.flush()
+            s = Settings.from_parameters(self.params(), env_path=env.name)
+        self.assertEqual(s.collector_intervals["system"], 45)
+        self.assertEqual(s.collector_intervals["smart"], 7200)
+        self.assertEqual(s.interval, 45)
+
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as env:
+            env.write("GPU_INTERVAL=2\n")
+            env.flush()
+            with self.assertRaises(SettingsError):
+                Settings.from_parameters(self.params(), env_path=env.name)
 
     def test_snmpv3(self):
         s = Settings.from_parameters(self.params(Mode2="3", Username="monitor", Password="longpassphrase",

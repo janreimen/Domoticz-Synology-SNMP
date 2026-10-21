@@ -110,7 +110,7 @@ NEW_VERSION="$(source_version)"
 [ -n "$NEW_VERSION" ] || die "cannot read __version__ from synoSNMP/__init__.py"
 
 ITEMS=(plugin.py synoSNMP)
-for optional in README.md CHANGELOG.md LICENSE DEPLOY.md SECURITY.md docs tools; do
+for optional in README.md CHANGELOG.md LICENSE DEPLOY.md SECURITY.md .env.sample docs tools; do
     [ -e "${SRC}/${optional}" ] && ITEMS+=("$optional")
 done
 

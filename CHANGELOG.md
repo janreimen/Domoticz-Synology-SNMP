@@ -1,9 +1,21 @@
 # Changelog
 
-All notable changes to this project are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are plain numbers
-(`MAJOR.MINOR.PATCH`, optionally a fourth `.N` for small fixes) so that release tags work with plugin managers
-such as PyPluginStore.
+## [0.2.2] - 2026-10-21
+
+### Added
+- Per-collector polling intervals loaded from a documented plugin-local `.env` file; `.env.sample` provides defaults and descriptions.
+- Independent intervals for system, resources, physical disks, RAID/storage pools, volumes, network, UPS, expansion units, disk I/O, SMART, services, SSD cache, and GPU metrics.
+- Environment variables override `.env` values; accepted intervals are 10–86400 seconds. SNMP credentials remain in Domoticz hardware parameters.
+- Regression tests for schedule-file loading, defaults, overrides and interval validation.
+
+### Changed
+- Removed the single fast/slow interval fields from the Domoticz hardware configuration. The poller wakes at the shortest configured interval and each collector runs only when due.
+- Cached readings remain available between scheduled collections, without being counted as fresh hardware-presence evidence.
+- Updated the hardware description and README with the schedule variables and collector-to-sensor mapping.
+
+### Notes
+- Settings follow existing collector boundaries. Readings bundled by a collector (for example uptime with CPU/memory, and DSM update status with system health) share that collector's interval.
+- Real DS1525+ hardware validation remains outstanding.
 
 ## [0.2.1] - 2026-10-20
 
@@ -73,6 +85,7 @@ Complete rewrite of the old pysnmp-based *Synology Monitor* plugin.
   logged once, and their recovery once.
 - Modular code: parser, client, collectors, engine, device layer and plugin glue are separate modules.
 
+[0.2.2]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.2
 [0.2.1]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.1
 [0.2.0]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.0
 [0.1.1]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.1.1

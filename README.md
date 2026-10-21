@@ -78,7 +78,7 @@ Full instructions, updates, rollback and removal: **[DEPLOY.md](DEPLOY.md)**.
 | Community (v1/v2c) | the community string |
 | SNMPv3 user / passphrase | v3 user name and authentication passphrase (min. 8 characters) |
 | SNMPv3 options | `level;authProtocol;privProtocol;privPassphrase`, for example `authPriv;SHA;AES;`. Level: `noAuthNoPriv`, `authNoPriv`, `authPriv`. Auth: MD5, SHA, SHA-224/256/384/512. Privacy: DES, AES, AES-192, AES-256. An empty privacy passphrase re-uses the authentication passphrase |
-| Poll interval | seconds between polls, minimum 10, default 60 |
+| Sensor-family intervals | Configured in the plugin-root `.env` file; each family has its own interval (10–86400 seconds). Copy `.env.sample` to `.env` and edit the values. The scheduler wakes at the shortest configured interval and runs each collector only when due. |
 | Detail level | Basic / Standard / Full, see below. Default Full |
 | Logging level | **Normal**: start/stop, timeouts and critical errors. **Debug**: startup, NAS identity, recoveries, poll summary and approximate time until the next poll. **Trace**: full internal execution path, including poll-cycle steps, collector discovery/start/skip/result/error decisions, every SNMP request/response, reading and device decisions, heartbeat callbacks, and poll scheduling. SNMP credentials are never logged. |
 
@@ -97,7 +97,7 @@ Run several NAS units by adding the hardware once per NAS. Each gets its own set
 | | UPS | status, battery charge, load, runtime (only if a UPS is attached) |
 | | Expansion units | power state of DX/RX units (only if attached) |
 | **Full** | Drive I/O | per drive: load %, read and write MB/s |
-| | SMART | per drive: health from reallocated / pending / uncorrectable sectors, power-on hours (polled every 10 min) |
+| | SMART | per drive: health from reallocated / pending / uncorrectable sectors, power-on hours (polled on the configurable slow schedule) |
 | | Services | logged-in users per service (HTTP, CIFS, NFS, SSH, ...) |
 | | Extras | bad-sector counts, 5/15 min load, UPS info, SSD cache hit rates, GPU load (only on models that have them) |
 
@@ -140,21 +140,39 @@ Adding an area = one new file in `collectors/` plus one line in `collectors/__in
 
 **Detection.** On start and then hourly each collector walks the relevant tables (Synology MIB under
 `1.3.6.1.4.1.6574`, UCD-SNMP, HOST-RESOURCES, IF-MIB), decides what exists and builds a device list. Row numbers are
-never trusted: volumes and ports are re-identified by name on every poll, so a renumbering after a firmware
+never trusted: volumes are re-identified by name on their scheduled collection and ports on the next scheduled network poll, so a renumbering after a firmware
 update or a new volume does not mix up devices.
 
-**Polling.** Every *Poll interval* the background thread runs one cycle and puts the result in a queue; Domoticz'
-heartbeat (every 5 s) drains it and updates devices. Unchanged values are only rewritten every 5 minutes. The work
+**Schedule configuration (`.env`).** Copy `.env.sample` to `.env` beside `plugin.py`. All values are seconds (10–86400). The environment is intentionally limited to polling intervals; SNMP credentials remain in Domoticz hardware parameters. The process environment overrides matching `.env` entries. Current collector-to-sensor mapping is:
+
+| `.env` variable | Readings covered | Default |
+|---|---|---:|
+| `SYSTEM_INTERVAL` | System status, power/fans, thermal status, NAS temperature, system info and DSM update status | 60 s |
+| `RESOURCES_INTERVAL` | CPU, memory, swap, load averages and uptime | 60 s |
+| `DISKS_INTERVAL` | Physical disk health, temperature, remaining life and bad-sector counts | 300 s |
+| `RAID_INTERVAL` | RAID / storage-pool status | 300 s |
+| `VOLUMES_INTERVAL` | Volume capacity and free space | 600 s |
+| `NETWORK_INTERVAL` | Network interface status and traffic rates | 60 s |
+| `UPS_INTERVAL` | UPS status, charge, load, runtime and identifying information | 60 s |
+| `EXPANSION_UNITS_INTERVAL` | Expansion-unit and redundant-power status | 300 s |
+| `DISK_IO_INTERVAL` | Physical disk load and read/write throughput | 60 s |
+| `SMART_INTERVAL` | SMART health and detailed drive statistics | 3600 s |
+| `SERVICES_INTERVAL` | Connected users per supported service | 300 s |
+| `SSD_CACHE_INTERVAL` | SSD cache read/write hit rates | 60 s |
+| `GPU_INTERVAL` | GPU and GPU-memory utilization | 60 s |
+
+These settings follow the existing collector boundaries. Consequently, readings inside one collector share its interval—for example, uptime shares `RESOURCES_INTERVAL`, and DSM update status shares `SYSTEM_INTERVAL`. Separate intervals inside those collectors would require splitting the collector architecture and are not implied by this configuration.
+
+**Polling.** The plugin reads per-family intervals from `.env` in the plugin root; `.env.sample` documents every supported setting and default. The background thread wakes at the shortest configured collector interval, and each collector runs only when its own interval is due. Cached values are retained between runs; a cached value is not treated as proof that a device still exists, so missing hardware is detected on its next successful collection. Domoticz' heartbeat (every 5 s) drains the queue and updates devices. Unchanged values are only rewritten every 5 minutes. The work
 per poll, measured on the simulated NAS models:
 
 | Detail level | SNMP calls, first poll / later polls |
 |---|---|
 | Basic | 8 / 5 |
 | Standard | 14 / 8 |
-| Full | 19 / 12 (13 when the 10-minute SMART refresh is due) |
+| Full | varies with the configured collector intervals; fewer table walks and SNMP subprocesses on fast cycles |
 
-Each call is one short-lived `snmpget` / `snmpbulkwalk` process (about 0.3 s for a whole Full cycle against a local
-`snmpd`; over the LAN add the NAS' response time per call). At the default 60 s that is 12 small process starts a minute.
+Each SNMP command is one short-lived `snmpget` / `snmpbulkwalk` process. The number of processes now depends on the configured slow schedule: ordinary fast cycles skip slow table collectors, while the scheduled slow cycle performs their reads. `snmpget` requests batch up to 20 scalar OIDs per process; walks use `snmpbulkwalk` when supported.
 
 **Failure handling.** Each collector is isolated: if one fails the others still deliver. A problem is logged **once**
 and its recovery once, not every poll. When the NAS stops answering, all its devices are flagged timed out and values

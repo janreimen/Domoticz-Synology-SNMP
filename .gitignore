@@ -6,7 +6,7 @@ __pycache__/
 .mypy_cache/
 .venv/
 venv/
-*.patch  
+*.patch 
 # build output
 dist/
 
@@ -21,3 +21,6 @@ dump*.txt
 *-dump.txt
 nas-dump*.txt
 *.mibdump
+
+# Local polling configuration; commit .env.sample instead
+.env

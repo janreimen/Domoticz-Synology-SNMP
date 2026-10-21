@@ -88,6 +88,7 @@ class DynamicHardwareTests(unittest.TestCase):
         self.assertIn("disk.drive4.temp", before.present_keys)
         for col in range(2, 14):
             client.mib.data.pop(mibdata.SYNO + ".2.1.1.%d.3" % col, None)
+        clock.advance(engine.settings.slow_interval)
         after = engine.cycle()
         self.assertNotIn("disk.drive4.temp", after.present_keys)
         self.assertIn("disk", after.ran_groups)                     # -> device layer flags it timed out
@@ -98,12 +99,14 @@ class DynamicHardwareTests(unittest.TestCase):
         engine, client, clock = make(mibdata.ds218())
         engine.cycle()
         mibdata._disk(client.mib, 2, "Drive 3", "ST4000VN008", "HDD", 1, 31, "hotspare", 0, -1, 1)
+        clock.advance(engine.settings.slow_interval)
         self.assertEqual(by_key(engine.cycle())["disk.drive3.temp"].svalue, "31.0")
 
     def test_mount_index_shift_is_detected(self):
         """hrStorage indexes are dynamic: when /volume1 moves, we must not report another mount's numbers."""
         engine, client, clock = make(mibdata.ds920())
         engine.cycle()
+        clock.advance(engine.settings.slow_interval)
         for col in range(1, 7):                                     # index 41 now describes /tmp, /volume1 moved to 45
             row41 = client.mib.data.pop(mibdata.HRS + ".%d.41" % col)
             client.mib.data[mibdata.HRS + ".%d.45" % col] = row41
@@ -118,6 +121,59 @@ class DynamicHardwareTests(unittest.TestCase):
         first = engine.cycle()
         second = engine.cycle()
         self.assertLess(second.snmp_calls, first.snmp_calls)        # discovery walks only happen once
+
+
+class SlowScheduleTests(unittest.TestCase):
+    def test_slow_collectors_are_skipped_then_run_when_due(self):
+        engine, client, clock = make(mibdata.ds920(), slow_interval=120)
+        first = engine.cycle()
+        self.assertIn("disk", first.ran_groups)
+        self.assertIn("vol", first.ran_groups)
+        first_calls = first.snmp_calls
+        clock.advance(60)
+        second = engine.cycle()
+        self.assertNotIn("disk", second.ran_groups)
+        self.assertNotIn("vol", second.ran_groups)
+        self.assertIn("disk.drive1.temp", by_key(second))  # cached values remain available
+        self.assertLess(second.snmp_calls, first_calls)
+        self.assertNotIn("disk.drive1.temp", second.present_keys)  # cache is not fresh presence evidence
+        clock.advance(60)
+        third = engine.cycle()
+        self.assertIn("disk", third.ran_groups)
+        self.assertIn("vol", third.ran_groups)
+        self.assertIn("disk.drive1.temp", third.present_keys)
+
+    def test_failed_slow_collector_retains_cached_values_without_marking_fresh(self):
+        engine, client, clock = make(mibdata.ds920(), slow_interval=120)
+        first = engine.cycle()
+        old = by_key(first)["disk.drive1.temp"].svalue
+        clock.advance(120)
+        client.fail_prefixes = [mibdata.SYNO + ".2.1.1"]
+        second = engine.cycle()
+        self.assertNotIn("disk", second.ran_groups)
+        self.assertNotIn("disk.drive1.temp", second.present_keys)
+        self.assertEqual(by_key(second)["disk.drive1.temp"].svalue, old)
+
+    def test_unreachable_cycle_does_not_return_cached_readings(self):
+        engine, client, clock = make(mibdata.ds920(), slow_interval=120)
+        engine.cycle()
+        clock.advance(60)
+        client.down = True
+        result = engine.cycle()
+        self.assertFalse(result.reachable)
+        self.assertEqual(result.readings, [])
+        self.assertEqual(result.present_keys, set())
+        self.assertEqual(result.ran_groups, set())
+
+    def test_fast_metrics_continue_every_cycle(self):
+        engine, client, clock = make(mibdata.ds920(), slow_interval=300)
+        first = engine.cycle()
+        clock.advance(60)
+        second = engine.cycle()
+        self.assertIn("res", second.ran_groups)
+        self.assertIn("sys", second.ran_groups)
+        self.assertIn("disk", first.ran_groups)
+        self.assertNotIn("disk", second.ran_groups)
 
 
 if __name__ == "__main__":

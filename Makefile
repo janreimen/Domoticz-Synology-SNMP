@@ -50,7 +50,7 @@ check: test lint compat
 
 package:
 	@mkdir -p $(DIST)
-	tar --exclude=./$(DIST) --exclude=./.git --exclude='__pycache__' --exclude='*.pyc' --exclude=./.pytest_cache \
+	tar --exclude=./$(DIST) --exclude=./.git --exclude=./.env --exclude='__pycache__' --exclude='*.pyc' --exclude=./.pytest_cache \
 	    --transform 's,^\.,$(PLUGIN),' -czf $(ARCHIVE) .
 	@echo "built $(ARCHIVE)"
 

@@ -227,9 +227,18 @@ class SnmpClient:
     def get_many(self, oids: Sequence[str]) -> Dict[str, Varbind]:
         """GET several scalars.  Absent objects are simply not in the result."""
         result: Dict[str, Varbind] = {}
-        oids = list(oids)
-        for i in range(0, len(oids), self.GET_CHUNK):
-            for vb in self._get_chunk(oids[i:i + self.GET_CHUNK]):
+        # Keep request order but remove duplicates before chunking. Repeated OIDs
+        # waste request slots and can push otherwise compatible reads into another
+        # snmpget subprocess. Normalise leading dots to match parsed response keys.
+        unique_oids = []
+        seen = set()
+        for oid in oids:
+            normalized = oid.lstrip(".")
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                unique_oids.append(normalized)
+        for i in range(0, len(unique_oids), self.GET_CHUNK):
+            for vb in self._get_chunk(unique_oids[i:i + self.GET_CHUNK]):
                 if not vb.missing:
                     result[vb.oid] = vb
         return result

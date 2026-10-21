@@ -11,6 +11,20 @@ def argv(**kw):
 
 
 class CommandLineTests(unittest.TestCase):
+    def test_get_many_deduplicates_oids_before_chunking(self):
+        from synoSNMP.snmpcli import SnmpClient
+        from synoSNMP.snmpparse import Varbind, INTEGER
+        client = object.__new__(SnmpClient)
+        batches = []
+        def get_chunk(oids):
+            batches.append(list(oids))
+            return [Varbind(oid, INTEGER, 1, "1") for oid in oids]
+        client._get_chunk = get_chunk
+        client.GET_CHUNK = 2
+        result = client.get_many([".1.3.6", "1.3.6", "1.3.7", "1.3.8"])
+        self.assertEqual(batches, [["1.3.6", "1.3.7"], ["1.3.8"]])
+        self.assertEqual(set(result), {"1.3.6", "1.3.7", "1.3.8"})
+
     def test_v2c(self):
         a = argv(community="secret", port=1161, timeout=3, retries=2)
         self.assertEqual(a[a.index("-v") + 1], "2c")
@@ -40,6 +54,7 @@ class CommandLineTests(unittest.TestCase):
 
 
     def test_trace_logs_requests_and_results_without_credentials(self):
+        from synoSNMP.snmpparse import Varbind, INTEGER
         logs = []
         def runner(argv, timeout):
             return 0, ".1.3.6.1.2.1.1.3.0 = INTEGER: 42\n", ""

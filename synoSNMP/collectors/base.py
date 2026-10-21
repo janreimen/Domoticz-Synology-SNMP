@@ -31,8 +31,8 @@ class Collector:
     ``min_level``, and implement ``collect``.  ``discover`` is optional: it is
     called when hardware detection runs (first cycle, then hourly) for
     collectors that keep a cache of what exists (network interfaces, mounts).
-    Small tables are simply re-walked on every poll, which makes them
-    self-healing and needs no discovery step.
+    Small tables are re-walked whenever their collector is scheduled, which makes them
+    self-healing and needs no separate discovery step.
     """
 
     name = "base"

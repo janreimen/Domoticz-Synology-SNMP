@@ -1,5 +1,5 @@
 """
-<plugin key="SynologySNMP" name="Synology NAS (net-snmp)" author="janreimen" version="0.2.1">
+<plugin key="SynologySNMP" name="Synology NAS (net-snmp)" author="janreimen" version="0.2.2">
     <description>
         <h2>Synology NAS monitor</h2><br/>
         Reads a Synology NAS through the native net-snmp command line tools (snmpget / snmpbulkwalk).
@@ -11,6 +11,8 @@
             <li>On the Domoticz host: <tt>sudo apt install snmp</tt></li>
             <li>On the NAS: DSM &gt; Control Panel &gt; Terminal &amp; SNMP &gt; enable SNMP (v1/v2c community or v3 user)</li>
         </ul>
+        <h3>Polling intervals</h3>
+        Configure polling intervals in the plugin directory's <tt>.env</tt> file. Copy <tt>.env.sample</tt> to <tt>.env</tt>; interval values are in seconds.
         <h3>SNMPv3</h3>
         Fill in Username and Password (authentication passphrase, min. 8 characters). "SNMPv3 options" is
         <tt>level;authProtocol;privProtocol;privPassphrase</tt>, for example <tt>authPriv;SHA;AES;</tt>.
@@ -30,7 +32,6 @@
         <param field="Username" label="SNMPv3 user" width="250px"/>
         <param field="Password" label="SNMPv3 passphrase" width="250px" password="true"/>
         <param field="Mode3" label="SNMPv3 options" width="250px" default="authPriv;SHA;AES;"/>
-        <param field="Mode4" label="Poll interval (seconds)" width="75px" required="true" default="60"/>
         <param field="Mode5" label="Detail level" width="150px">
             <options>
                 <option label="Basic" value="1"/>
@@ -112,6 +113,9 @@ class BasePlugin:
                                     trace=self._trace if self.settings.log_level >= 3 else None),
                              self.settings.interval)
         self.poller.start()
+        if self.settings.log_level >= 2:
+            Domoticz.Log("Sensor schedule loaded from .env: scheduler tick=%ds; %d collector intervals configured" % (
+                self.settings.interval, len(self.settings.collector_intervals or {})))
         Domoticz.Heartbeat(HEARTBEAT_SECONDS)
 
     def onHeartbeat(self):

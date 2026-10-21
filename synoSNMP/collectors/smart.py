@@ -1,4 +1,4 @@
-"""SMART health per drive (Synology SMART MIB), read every 10 minutes (it changes slowly)."""
+"""SMART health per drive (Synology SMART MIB), read on the configurable slow schedule."""
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple

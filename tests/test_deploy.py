@@ -46,7 +46,7 @@ class DeployScriptTests(unittest.TestCase):
     def test_fresh_install_copies_only_runtime_files(self):
         out = self.deploy()
         self.assertIn("new install", out)
-        for path in ("plugin.py", "synoSNMP/__init__.py", "synoSNMP/collectors/disks.py", "README.md"):
+        for path in ("plugin.py", "synoSNMP/__init__.py", "synoSNMP/collectors/disks.py", "README.md", ".env.sample"):
             self.assertTrue(os.path.exists(os.path.join(self.dir, path)), path)
         self.assertFalse(os.path.exists(os.path.join(self.dir, "tests")))
         self.assertFalse(os.path.exists(os.path.join(self.dir, "dist")))

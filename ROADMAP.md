@@ -25,7 +25,7 @@ how likely they are to matter:
 - [ ] Batch several walks into one `snmpbulkwalk` call (it accepts several OIDs), to cut the first-poll call count
 - [ ] Pass SNMP credentials through a private (mode 0600) net-snmp configuration file instead of command-line arguments,
       so they no longer show up in `ps` (see SECURITY.md)
-- [ ] Optional per-area poll intervals (slow-changing areas such as volumes and SMART less often than CPU)
+- [x] Configurable fast/slow polling schedules (0.2.2: CPU/memory and fast metrics on the main interval; disks, storage pools, volume capacity, SMART and optional hardware on the slow interval).
 - [ ] Areas not covered yet, only where the NAS exposes them over SNMP and a real dump is available: iSCSI LUNs,
       high-availability cluster state, NFS / SMB statistics
 - [ ] Domoticz selector switches for the "DSM update" and "disk summary" states, if requested

@@ -1,7 +1,7 @@
 """Physical drives (Synology Disk MIB): temperature, health, remaining life, bad sectors.
 
-The drive table is small, so it is re-walked on every poll: inserted, removed
-or swapped drives show up (or time out) on their own, with no discovery step.
+The drive table is small, so it is re-walked whenever the configured slow schedule runs: inserted, removed
+or swapped drives show up (or time out) on their own, with no separate discovery step.
 """
 from __future__ import annotations
 

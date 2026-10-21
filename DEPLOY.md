@@ -46,9 +46,10 @@ What it does on the target:
    and keeps the newest 3. The backup is deliberately **outside** the plugins directory: a second copy of `plugin.py`
    in there would be loaded by Domoticz as a duplicate plugin
 4. replaces `plugin.py`, `synoSNMP/` and the documentation files. Other files you put in that directory are left alone
-5. gives the directory back to its previous owner (for example `domoticz:domoticz`)
-6. restarts the `domoticz` systemd service
-7. with `--verify NAS`: runs `python3 -m synoSNMP NAS --level 1` on the target and prints what the plugin would create
+5. copies `.env.sample` for schedule reference; on first install, create the local `.env` with `cp .env.sample .env` in the installed plugin directory and adjust intervals as needed (the plugin uses documented defaults if `.env` is absent)
+6. gives the directory back to its previous owner (for example `domoticz:domoticz`)
+7. restarts the `domoticz` systemd service
+8. with `--verify NAS`: runs `python3 -m synoSNMP NAS --level 1` on the target and prints what the plugin would create
 
 Nothing is changed when a step before the copy fails (for instance when the backup directory is not writable).
 
