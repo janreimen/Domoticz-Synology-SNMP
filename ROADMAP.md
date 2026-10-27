@@ -1,9 +1,11 @@
 # Roadmap
 
-## Current state (0.2.0)
+## Current state (0.2.3)
 
 Feature-complete for the original goal: a Synology NAS monitored through the native net-snmp tools, hardware detected
-dynamically, modular code, documented, tested against simulated DS920+ / DS218+ data and a real `snmpd`.
+dynamically, modular code, documented, tested against simulated DS920+ / DS218+ data and a real `snmpd`. 0.2.3 made the
+scheduler, the logging and the failure handling behave as documented (see the CHANGELOG), added the *Plugin Health*
+device and moved the SNMPv3 privacy passphrase into a password field.
 **Not yet verified on real DSM hardware.** That is the main gap, and the next milestone.
 
 ## 0.2.x - verify on real hardware
@@ -22,18 +24,24 @@ how likely they are to matter:
 
 ## 0.3 - fewer process starts, more coverage
 
-- [ ] Batch several walks into one `snmpbulkwalk` call (it accepts several OIDs), to cut the first-poll call count
-- [ ] Pass SNMP credentials through a private (mode 0600) net-snmp configuration file instead of command-line arguments,
-      so they no longer show up in `ps` (see SECURITY.md)
-- [x] Configurable fast/slow polling schedules (0.2.2: CPU/memory and fast metrics on the main interval; disks, storage pools, volume capacity, SMART and optional hardware on the slow interval).
+- [x] ~~Batch several walks into one `snmpbulkwalk` call~~ Investigated in 0.2.3: `snmpbulkwalk` walks only the first OID
+      it is given, so this is not possible. The first-poll call count stays as it is (8 / 14 / 19)
+- [x] Pass SNMP credentials through a private (mode 0600) net-snmp configuration file instead of command-line arguments,
+      so they no longer show up in `ps` (0.2.1, see SECURITY.md)
+- [x] Configurable polling schedules (0.2.2: one interval per collector family in `.env`; 0.2.3: the scheduler runs
+      them as configured, with back-off for failing collectors, plus timeout / retries / re-detection settings)
+- [x] A health device for the plugin itself (0.2.3)
+- [ ] More stable device keys. Deferred: the Domoticz plugin API cannot rename the `DeviceID` of an existing device, so
+      any change orphans the installed devices and their history. Needs a migration that creates the new devices next to the
+      old ones, or Domoticz support for renaming
 - [ ] Areas not covered yet, only where the NAS exposes them over SNMP and a real dump is available: iSCSI LUNs,
       high-availability cluster state, NFS / SMB statistics
 - [ ] Domoticz selector switches for the "DSM update" and "disk summary" states, if requested
 
 ## Release and packaging
 
-- [ ] Publish the first GitHub release (`v0.2.0`) and check that the plugin manager sees it
-      (release tags are plain numbers, see `checklist.md`)
+- [x] GitHub releases exist since `v0.2.0`; since 0.2.3 a pushed tag builds and publishes the package (`release.yml`)
+- [ ] Check that the plugin manager lists the newest release (release tags are plain numbers, see `checklist.md`)
 - [ ] Verify the plugin on a second Domoticz host (the `deploy.sh --host` workflow)
 
 ## Ideas, not planned

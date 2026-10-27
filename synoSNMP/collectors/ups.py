@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 from .. import oids
 from ..config import LEVEL_FULL, LEVEL_STANDARD
-from ..model import NONE, OK, Reading, worst
+from ..model import NONE, OK, WARN, Reading, worst
 from ..snmpcli import SnmpClient
 from ..snmpparse import Varbind
 from .base import Collector
@@ -54,6 +54,12 @@ class UpsCollector(Collector):
         charge = val(oids.UPS_CHARGE)
         if charge is not None and charge.as_float() is not None:
             out.append(Reading.percentage("ups.charge", "UPS Battery Charge", charge.as_float()))
+        warn = val(oids.UPS_CHARGE_WARN)
+        if charge is not None and warn is not None and charge.as_float() is not None and warn.as_float() is not None:
+            now_pct, warn_pct = charge.as_float(), warn.as_float()
+            # the UPS's own warning threshold (NUT: battery.charge.warning): yellow at or below it
+            out.append(Reading.alert("ups.battery", "UPS Battery", OK if now_pct > warn_pct else WARN,
+                                     "%.0f %% charge (warning at %.0f %%)" % (now_pct, warn_pct)))
         load = val(oids.UPS_LOAD)
         if load is not None and load.as_float() is not None:
             out.append(Reading.percentage("ups.load", "UPS Load", load.as_float()))

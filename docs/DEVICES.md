@@ -17,7 +17,7 @@ devices that match its hardware (a five-bay DS1525 gets five drives, the two-bay
 
 ## Synology DS920+ (4 bays + 2 NVMe cache, DSM 7)
 
-88 devices at *Full*, 48 of them visible by default. Model reported by the NAS: `DS920+`, DSM `DSM 7.2.1-69057 Update 5`.
+91 devices at *Full*, 50 of them visible by default. Model reported by the NAS: `DS920+`, DSM `DSM 7.2.1-69057 Update 5`.
 
 | Device ID | Name | Type | From level | Visible | Example value |
 |---|---|---|---|---|---|
@@ -36,6 +36,8 @@ devices that match its hardware (a five-bay DS1525 gets five drives, the two-bay
 | `disk.drive4.health` | Drive 4 Health | Alert | Basic | yes | WD40EFRX-68N32N0 \| HDD \| data \| Normal \| health: Healthy \| bad sectors: 3 (level 2) |
 | `disk.drive4.temp` | Drive 4 Temperature | Temperature | Basic | yes | 38.0 C |
 | `disk.summary` | Disks Overall | Alert | Basic | yes | 6 drives \| hottest 43 C \| 1 with problems (level 2) |
+| `plugin.health` | Plugin Health | Alert | Basic | yes | 13 collectors OK \| 19 SNMP calls \| 0.0 s (level 1) |
+| `plugin.pollsecs` | Poll Duration | Custom sensor | Basic | no | 0.00 s |
 | `raid.storagepool1.status` | Storage Pool 1 Status | Alert | Basic | yes | Normal \| 3.0 TB free of 21.0 TB (level 1) |
 | `raid.volume1.status` | Volume 1 Status | Alert | Basic | yes | Normal \| 3.0 TB free of 20.0 TB (level 1) |
 | `res.cpu` | CPU | Percentage | Basic | yes | 8.0 % |
@@ -66,6 +68,7 @@ devices that match its hardware (a five-bay DS1525 gets five drives, the two-bay
 | `net.eth1.link` | eth1 Link | Alert | Standard | yes | Down (level 2) |
 | `net.eth1.rx` | eth1 Received | Custom sensor | Standard | yes | (rate: first value after the second poll) |
 | `net.eth1.tx` | eth1 Sent | Custom sensor | Standard | yes | (rate: first value after the second poll) |
+| `ups.battery` | UPS Battery | Alert | Standard | yes | 100 % charge (warning at 30 %) (level 1) |
 | `ups.charge` | UPS Battery Charge | Percentage | Standard | yes | 100.0 % |
 | `ups.load` | UPS Load | Percentage | Standard | yes | 21.0 % |
 | `ups.runtime` | UPS Runtime | Custom sensor | Standard | yes | 58 min |
@@ -112,7 +115,7 @@ devices that match its hardware (a five-bay DS1525 gets five drives, the two-bay
 
 ## Synology DS218+ (2 bays, DSM 6)
 
-24 devices at *Full*, 21 of them visible by default. Model reported by the NAS: `DS218+`, DSM `DSM 7.1.1-42962 Update 6`.
+26 devices at *Full*, 22 of them visible by default. Model reported by the NAS: `DS218+`, DSM `DSM 7.1.1-42962 Update 6`.
 
 | Device ID | Name | Type | From level | Visible | Example value |
 |---|---|---|---|---|---|
@@ -121,6 +124,8 @@ devices that match its hardware (a five-bay DS1525 gets five drives, the two-bay
 | `disk.drive2.health` | Drive 2 Health | Alert | Basic | yes | ST4000VN008 \| HDD \| data \| Normal \| health: Healthy \| bad sectors: 0 (level 1) |
 | `disk.drive2.temp` | Drive 2 Temperature | Temperature | Basic | yes | 35.0 C |
 | `disk.summary` | Disks Overall | Alert | Basic | yes | 2 drives \| hottest 35 C \| no problems (level 1) |
+| `plugin.health` | Plugin Health | Alert | Basic | yes | 13 collectors OK \| 19 SNMP calls \| 0.0 s (level 1) |
+| `plugin.pollsecs` | Poll Duration | Custom sensor | Basic | no | 0.00 s |
 | `raid.volume1.status` | Volume 1 Status | Alert | Basic | yes | Normal \| 2.0 TB free of 3.0 TB (level 1) |
 | `res.cpu` | CPU | Percentage | Basic | yes | 20.0 % |
 | `res.mem` | Memory | Percentage | Basic | yes | 57.5 % |

@@ -106,6 +106,38 @@ class DeployScriptTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("restart command failed", proc.stdout)
 
+    def test_verify_args_with_a_passphrase_are_warned_about_and_never_echoed(self):
+        out = self.deploy("--dry-run", "--verify", "192.0.2.10", "--verify-args",
+                          "-v 3 -u monitor -A topsecret123 -X privsecret456 -c hidden-community")
+        self.assertIn("visible in the process list", out)
+        for secret in ("topsecret123", "privsecret456", "hidden-community"):
+            self.assertNotIn(secret, out)
+        self.assertIn("-v 3 -u monitor -A *** -X *** -c ***", out)              # the rest of the command stays readable
+
+    def test_attached_and_long_forms_of_the_secret_options_are_covered(self):
+        out = self.deploy("--dry-run", "--verify", "192.0.2.10", "--verify-args", "-Asecretattached --priv-pass=secretlong")
+        self.assertIn("visible in the process list", out)
+        self.assertNotIn("secretattached", out)
+        self.assertNotIn("secretlong", out)
+
+    def test_a_mistyped_option_never_echoes_its_value(self):
+        """--verify-args=... (with '=') is not an accepted form; the error must not repeat the passphrase in it."""
+        out = self.deploy("--dry-run", "--verify-args=-A hunter2hunter2", expect=1)
+        self.assertIn("unknown option: --verify-args", out)
+        self.assertNotIn("hunter2hunter2", out)
+
+    def test_a_stray_argument_is_not_echoed_either(self):
+        """`--verify-args -A hunter2hunter2` (unquoted) makes the passphrase a separate, unexpected argument."""
+        out = self.deploy("--dry-run", "--verify-args", "-A", "hunter2hunter2", expect=1)
+        self.assertIn("unexpected argument", out)
+        self.assertNotIn("hunter2hunter2", out)
+
+    def test_verify_args_without_secrets_are_silent_and_unchanged(self):
+        for args in ("-v 2c", "-c public --level 1", "-A - -X -", ""):
+            out = self.deploy("--dry-run", "--verify", "192.0.2.10", "--verify-args", args)
+            self.assertNotIn("visible in the process list", out, args)
+            self.assertIn("[dry-run] verify: python3 -m synoSNMP 192.0.2.10 %s --level 1" % args, out)
+
     def test_bad_arguments(self):
         proc = subprocess.run(["bash", SCRIPT, "--nope"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               universal_newlines=True, timeout=30)

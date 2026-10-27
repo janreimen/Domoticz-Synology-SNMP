@@ -14,7 +14,9 @@ Options used on every call:
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
@@ -27,6 +29,64 @@ from .snmpparse import Varbind
 Runner = Callable[[List[str], float], Tuple[int, str, str]]
 
 INSTALL_HINT = "Install the net-snmp client tools, e.g.: sudo apt install snmp"
+
+# Private credential directories are named <prefix><pid>-<random>, so that a directory left behind by a
+# Domoticz that was killed before onStop() can be recognised (its pid is gone) and removed at the next start.
+# Directories of 0.2.2 and older have no pid in the name; there is no way to tell whether the process that owns
+# one is still running, so they are never removed here.
+_PRIVATE_PREFIX = "domoticz-syno-snmp-"
+_PRIVATE_NAME = re.compile(r"^domoticz-syno-snmp-(\d{1,10})-[A-Za-z0-9_]+$")
+
+
+def _pid_alive(pid: int) -> bool:
+    """Is there a process with this id?  Anything doubtful counts as alive: only a provably dead owner frees a directory."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, OverflowError, ValueError):     # PermissionError: it exists, just not ours; an impossible id
+        return True
+    return True
+
+
+def cleanup_stale_private_configs(tmpdir: Optional[str] = None,
+                                  pid_alive: Callable[[int], bool] = _pid_alive,
+                                  uid: Optional[int] = None) -> List[str]:
+    """Remove private SNMP config directories whose owning process no longer exists.
+
+    A directory is only touched when its name carries the pid of a process that is gone, it is a real
+    directory (not a symlink) owned by ``uid`` (default: the current user) and it holds nothing but ``snmp.conf``.
+    Directories of live processes - including a second NAS hardware inside this very Domoticz - are left alone.
+    Returns the removed paths.
+    """
+    base = tmpdir or tempfile.gettempdir()
+    removed: List[str] = []
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return removed
+    me = os.getpid()
+    if uid is None and hasattr(os, "geteuid"):
+        uid = os.geteuid()
+    for name in names:
+        match = _PRIVATE_NAME.match(name)
+        if not match:
+            continue
+        pid = int(match.group(1))
+        if pid == me or pid_alive(pid):
+            continue
+        path = os.path.join(base, name)
+        try:
+            info = os.lstat(path)
+            if not stat.S_ISDIR(info.st_mode) or (uid is not None and info.st_uid != uid):
+                continue
+            if set(os.listdir(path)) - {"snmp.conf"}:
+                continue
+            shutil.rmtree(path)
+            removed.append(path)
+        except OSError:
+            continue
+    return removed
 
 
 class SnmpError(Exception):
@@ -92,6 +152,10 @@ class SnmpClient:
                 raise SnmpUnavailable("snmpget/snmpwalk not found in PATH. " + INSTALL_HINT)
             if "snmpbulkwalk" not in self._bin:
                 self._bulk_ok = False
+            try:
+                cleanup_stale_private_configs()
+            except Exception:                  # housekeeping must never keep the plugin from starting
+                pass
             self._prepare_private_config()
 
     # -- process control -------------------------------------------------
@@ -132,7 +196,7 @@ class SnmpClient:
             if s.v3_level == "authPriv":
                 directives.append("defPrivPassphrase %s" % self._config_value(s.v3_priv_pass))
 
-        directory = tempfile.mkdtemp(prefix="domoticz-syno-snmp-")
+        directory = tempfile.mkdtemp(prefix="%s%d-" % (_PRIVATE_PREFIX, os.getpid()))
         try:
             os.chmod(directory, 0o700)
             config_path = os.path.join(directory, "snmp.conf")

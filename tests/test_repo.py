@@ -31,6 +31,11 @@ class VersionTests(unittest.TestCase):
         self.assertTrue(released, "CHANGELOG.md has no released version")
         self.assertEqual(released[0], __version__, "newest CHANGELOG entry differs from synoSNMP.__version__")
 
+    def test_readme_status_line_names_the_current_version(self):
+        match = re.search(r"^> \*\*Status:\*\* version (\d+\.\d+\.\d+(?:\.\d+)?)", read("README.md"), re.M)
+        self.assertIsNotNone(match, "README.md has no '> **Status:** version X.Y.Z' line")
+        self.assertEqual(match.group(1), __version__, "README status line differs from synoSNMP.__version__")
+
     def test_changelog_links_every_release(self):
         text = read("CHANGELOG.md")
         for version in re.findall(r"^## \[(\d[^\]]*)\]", text, re.M):
@@ -40,6 +45,7 @@ class VersionTests(unittest.TestCase):
 class FileTests(unittest.TestCase):
     REQUIRED = ["LICENSE", "README.md", "CHANGELOG.md", "ROADMAP.md", "SECURITY.md", "CONTRIBUTING.md", "DEPLOY.md",
                 "checklist.md", "Makefile", "deploy.sh", ".gitignore", ".github/workflows/tests.yml",
+                ".github/workflows/release.yml",
                 "docs/DEVICES.md", "docs/SNMP-OIDS.md", "tools/capture_mib.sh", "tools/gen_device_catalog.py"]
 
     def test_required_files_exist(self):

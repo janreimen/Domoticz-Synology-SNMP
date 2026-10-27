@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+# The tests never need to write to the repository.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Python ${{ matrix.python-version }}
@@ -22,6 +26,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y snmp snmpd
           sudo systemctl stop snmpd || true
+      - name: Tests
+        run: python -m unittest discover -s tests -v
+
+  # Domoticz hosts often run an old Python (Debian 10/11: 3.7/3.9).  `vermin` below only reads the code; this
+  # job really runs the whole suite, including the end-to-end tests against a real snmpd, on the oldest versions
+  # the plugin claims to support.
+  old-python:
+    name: Python ${{ matrix.python-version }} (container)
+    runs-on: ubuntu-latest
+    container: python:${{ matrix.python-version }}-slim-bullseye
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.7", "3.8"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: net-snmp client tools and snmpd (for the end-to-end tests)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends snmp snmpd
       - name: Tests
         run: python -m unittest discover -s tests -v
 

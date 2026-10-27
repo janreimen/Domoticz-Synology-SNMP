@@ -1,6 +1,6 @@
 """Physical drives (Synology Disk MIB): temperature, health, remaining life, bad sectors.
 
-The drive table is small, so it is re-walked whenever the configured slow schedule runs: inserted, removed
+The drive table is small, so it is re-walked whenever DISKS_INTERVAL elapses: inserted, removed
 or swapped drives show up (or time out) on their own, with no separate discovery step.
 """
 from __future__ import annotations
@@ -39,7 +39,10 @@ class DiskCollector(Collector):
             status = cint(row, C_STATUS)
             health = cint(row, C_HEALTH)
             status_text, status_level = oids.DISK_STATUS.get(status, ("Unknown", NONE)) if status is not None else ("", NONE)
-            health_text, health_level = oids.DISK_HEALTH.get(health, ("", NONE)) if health is not None else ("", NONE)
+            if health is None:
+                health_text, health_level = "", NONE
+            else:
+                health_text, health_level = oids.DISK_HEALTH.get(health, ("Unknown (%d)" % health, WARN))
             level = worst(status_level, health_level)
             levels.append(level)
 

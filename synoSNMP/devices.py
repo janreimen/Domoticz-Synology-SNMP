@@ -7,7 +7,12 @@ It turns ``Reading`` objects into Domoticz devices:
     * missing devices are created on first sight (dynamic detection becomes dynamic devices)
     * values are written when they change, or every ``refresh_interval`` seconds so the
       "last seen" time stays fresh and Domoticz' sensor time-out does not trigger
-    * devices of hardware that disappeared are flagged "timed out" (red) instead of deleted
+    * devices of hardware that disappeared are flagged "timed out" (red) instead of deleted; so are those of a
+      collector that keeps failing, when a retry fails once its last good value is two intervals old
+    * a device that was deleted in the Domoticz UI while the plugin runs is created again on the next poll
+      (to get rid of one for good, clear its "Used" flag instead of deleting it)
+    * the axis label of Custom sensors is owned by the plugin and brought up to date once per start
+    * the plugin's own health devices (group ``plugin``) are written even while the NAS is down
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ TYPE_NAMES = {
 }
 
 MAX_UNIT = 255
+PLUGIN_GROUP = "plugin"      # key prefix of the plugin's own devices (health, poll duration)
 
 
 class DeviceManager:
@@ -39,6 +45,7 @@ class DeviceManager:
         self._units: Dict[str, int] = {}          # key -> Domoticz unit
         self._written: Dict[str, float] = {}      # key -> time of last write
         self._warned_full = False
+        self._synced: Set[str] = set()            # keys whose definition was checked since the start
         self.created = 0
 
     # -- start-up -------------------------------------------------------------------------
@@ -53,13 +60,13 @@ class DeviceManager:
     # -- main entry -------------------------------------------------------------------------
     def apply(self, result: CycleResult) -> None:
         now = self.clock()
-        for reading in result.readings:
+        for reading in list(result.readings) + list(result.health):
             self.dz.Debug("Reading %s [%s]: nValue=%d sValue=%r pending=%s" % (
                 reading.name, reading.key, reading.nvalue, reading.svalue, reading.pending))
             if reading.pending:
                 self.dz.Debug("Skipped pending reading %s [%s]" % (reading.name, reading.key))
                 continue
-            unit = self._units.get(reading.key) or self._create(reading)
+            unit = self._unit_for(reading)
             if unit is not None:
                 self._write(unit, reading, now)
         self._time_out_missing(result)
@@ -67,6 +74,8 @@ class DeviceManager:
     def mark_all_timed_out(self) -> None:
         devices = self.get_devices()
         for key, unit in self._units.items():
+            if group_of(key) == PLUGIN_GROUP:          # the health devices are what tells you the NAS is down
+                continue
             self._set_timeout(devices.get(unit), 1)
 
     # -- internals --------------------------------------------------------------------------
@@ -76,6 +85,21 @@ class DeviceManager:
             if unit not in taken:
                 return unit
         return None
+
+    def _unit_for(self, r: Reading) -> Optional[int]:
+        """The unit of this reading's device, creating the device when it does not exist (any more)."""
+        unit = self._units.get(r.key)
+        if unit is not None:
+            dev = self.get_devices().get(unit)
+            if dev is not None and getattr(dev, "DeviceID", r.key) == r.key:
+                return unit
+            # Deleted in the Domoticz UI while we run: forget it and make a new one instead of silently
+            # never updating it again.
+            del self._units[r.key]
+            self._synced.discard(r.key)
+            self.dz.Log("Device '%s' [%s] was removed in Domoticz; creating it again. To hide a device for good, "
+                        "clear its 'Used' flag instead of deleting it." % (r.name, r.key))
+        return self._create(r)
 
     def _create(self, r: Reading) -> Optional[int]:
         unit = self._free_unit()
@@ -102,6 +126,9 @@ class DeviceManager:
         dev = self.get_devices().get(unit)
         if dev is None:
             return
+        if r.key not in self._synced:
+            self._synced.add(r.key)
+            self._sync_definition(dev, r)
         changed = dev.nValue != r.nvalue or dev.sValue != r.svalue
         stale = now - self._written.get(r.key, 0.0) >= self.refresh_interval
         timed_out = bool(getattr(dev, "TimedOut", 0))
@@ -121,10 +148,30 @@ class DeviceManager:
             self.dz.Debug("TRACE: Domoticz refresh sent: %s [%s] unit=%d nValue=%d sValue=%r changed=%s refreshed=%s recovered=%s" % (
                 r.name, r.key, unit, r.nvalue, r.svalue, changed, stale, timed_out))
 
+    def _sync_definition(self, dev: Any, r: Reading) -> None:
+        """Bring the parts of an existing device that the plugin owns up to date (once per start).
+
+        Only the axis label of Custom sensors qualifies: names, visibility ("Used"), history and
+        notifications stay whatever the user made them.
+        """
+        if r.kind != CUSTOM:
+            return
+        wanted = "1;%s" % r.unit
+        options = dict(getattr(dev, "Options", None) or {})
+        if options.get("Custom") == wanted:
+            return
+        options["Custom"] = wanted
+        try:
+            dev.Update(nValue=dev.nValue, sValue=dev.sValue, Options=options)
+        except TypeError:
+            return
+        self.dz.Log("Device '%s' [%s]: axis label updated to %r" % (r.name, r.key, r.unit))
+
     def _time_out_missing(self, result: CycleResult) -> None:
         devices = self.get_devices()
         for key, unit in self._units.items():
-            if group_of(key) in result.ran_groups and key not in result.present_keys:
+            group = group_of(key)
+            if (group in result.ran_groups and key not in result.present_keys) or group in result.stale_groups:
                 self._set_timeout(devices.get(unit), 1)
 
     def _set_timeout(self, dev: Any, flag: int) -> None:

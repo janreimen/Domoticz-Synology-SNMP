@@ -21,7 +21,7 @@ class ConnectionTests(unittest.TestCase):
         third = engine.cycle()
         self.assertTrue(third.reachable)
         self.assertGreater(len(third.readings), 50)
-        self.assertTrue(any("restored" in t for t in messages(third, "info")))
+        self.assertTrue(any("restored" in t for t in messages(third, "notice")))     # recoveries show at Normal
         self.assertTrue(any("Connected to Synology DS920+" in t for t in messages(third, "info")))
 
     def test_hardware_is_rediscovered_after_an_outage(self):
@@ -69,9 +69,10 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(messages(again, "error"), [])              # same failure: no repeat
 
         client.fail_prefixes = []
+        clock.advance(engine.settings.slow_interval)               # the failed collector is retried after its back-off
         fixed = engine.cycle()
         self.assertIn("disk.drive1.temp", by_key(fixed))
-        self.assertTrue(any("disks: working again" in t for t in messages(fixed, "info")))
+        self.assertTrue(any("disks: working again" in t for t in messages(fixed, "notice")))
 
     def test_a_crashing_collector_is_contained(self):
         engine, client, clock = make(mibdata.ds920())
@@ -143,16 +144,27 @@ class SlowScheduleTests(unittest.TestCase):
         self.assertIn("vol", third.ran_groups)
         self.assertIn("disk.drive1.temp", third.present_keys)
 
-    def test_failed_slow_collector_retains_cached_values_without_marking_fresh(self):
+    def test_failed_slow_collector_does_not_replay_old_values_as_fresh(self):
+        """0.2.2 re-sent the cached readings of a failing collector every cycle, which kept refreshing "last seen"
+        in Domoticz: a table that had stopped answering looked perfectly healthy.  The devices now keep their last
+        value untouched, and are flagged timed out once it is two intervals old."""
         engine, client, clock = make(mibdata.ds920(), slow_interval=120)
-        first = engine.cycle()
-        old = by_key(first)["disk.drive1.temp"].svalue
+        engine.cycle()
         clock.advance(120)
         client.fail_prefixes = [mibdata.SYNO + ".2.1.1"]
         second = engine.cycle()
-        self.assertNotIn("disk", second.ran_groups)
+        self.assertNotIn("disk", second.ran_groups)                  # not "removed hardware" ...
         self.assertNotIn("disk.drive1.temp", second.present_keys)
-        self.assertEqual(by_key(second)["disk.drive1.temp"].svalue, old)
+        self.assertNotIn("disk.drive1.temp", by_key(second))         # ... and the old value is not sent again
+        self.assertEqual(second.stale_groups, set())                  # a single missed run is tolerated
+        self.assertIn("vol.root.used", by_key(second))                # a collector that is merely not due still replays
+        clock.advance(240)                                           # two intervals after the last good value
+        self.assertEqual(engine.cycle().stale_groups, {"disk"})
+        client.fail_prefixes = []
+        clock.advance(300)                                           # back-off is over
+        recovered = engine.cycle()
+        self.assertEqual(recovered.stale_groups, set())
+        self.assertIn("disk.drive1.temp", recovered.present_keys)
 
     def test_unreachable_cycle_does_not_return_cached_readings(self):
         engine, client, clock = make(mibdata.ds920(), slow_interval=120)

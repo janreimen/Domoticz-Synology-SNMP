@@ -57,7 +57,10 @@ production NAS: they use their own simulated agent.
 2. Add the OIDs and status tables to `oids.py`; write the Synology guide name or `unverified` next to them.
 3. Register the class in `synoSNMP/collectors/__init__.py` (`COLLECTOR_CLASSES`).
 4. Add rows for it to a fixture in `tests/mibdata.py` (`ds920()` / `ds218()` or a new model function) and tests in
-   `tests/test_collectors.py`: normal case, hardware absent, a value the NAS does not provide.
+   `tests/test_collectors.py`: normal case, hardware absent, a value the NAS does not provide. Anything that depends on
+   *when* a collector runs belongs in `tests/test_scheduling.py`, which drives the engine the way the poller does
+   (settings from `Settings.from_parameters`, a clock that advances with every SNMP call); a test that builds
+   `Settings(...)` directly bypasses the per-collector schedule and would not have caught the scheduling bugs of 0.2.2.
 5. `python3 tools/gen_device_catalog.py` to regenerate `docs/DEVICES.md` (a test fails if you forget), then update
    `docs/SNMP-OIDS.md`, the README device table and `CHANGELOG.md`.
 

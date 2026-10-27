@@ -106,6 +106,73 @@ class Ds920Tests(unittest.TestCase):
         self.assertIn("net.eth0.rx", self.result.present_keys)        # so a restart does not flag it as gone
 
 
+class DiskHealthSeverityTests(unittest.TestCase):
+    """diskHealthStatus (DSM 7.1+): 1 healthy, 2 warning, 3 critical, 4 failing; anything else is unknown."""
+
+    def health_of_drive1(self, code):
+        mib = mibdata.ds920()
+        mib.data[mibdata.SYNO + ".2.1.1.13.0"] = ("integer", code)
+        engine, _, _ = make(mib)
+        return by_key(engine.cycle())["disk.drive1.health"]
+
+    def test_every_documented_code_has_the_expected_colour(self):
+        self.assertEqual(self.health_of_drive1(1).nvalue, model.OK)
+        self.assertEqual(self.health_of_drive1(2).nvalue, model.WARN)
+        self.assertEqual(self.health_of_drive1(3).nvalue, model.CRIT)
+        self.assertEqual(self.health_of_drive1(4).nvalue, model.CRIT)       # "Failing" is not milder than "Critical"
+
+    def test_the_text_names_the_state(self):
+        self.assertIn("Failing", self.health_of_drive1(4).svalue)
+        self.assertIn("Critical", self.health_of_drive1(3).svalue)
+
+    def test_an_undocumented_code_is_shown_as_a_number_and_flagged(self):
+        reading = self.health_of_drive1(9)
+        self.assertEqual(reading.nvalue, model.WARN)
+        self.assertIn("Unknown (9)", reading.svalue)
+
+    def test_a_failing_drive_turns_the_summary_red(self):
+        mib = mibdata.ds920()
+        mib.data[mibdata.SYNO + ".2.1.1.13.0"] = ("integer", 4)
+        engine, _, _ = make(mib)
+        self.assertEqual(by_key(engine.cycle())["disk.summary"].nvalue, model.CRIT)
+
+
+class UpsBatteryAlertTests(unittest.TestCase):
+    CHARGE, WARN_AT = mibdata.SYNO + ".4.3.1.1.0", mibdata.SYNO + ".4.3.1.4.0"
+
+    def battery(self, charge, warn_at=30.0):
+        mib = mibdata.ds920()
+        mib.data[self.CHARGE] = ("float", charge)
+        if warn_at is None:
+            del mib.data[self.WARN_AT]
+        else:
+            mib.data[self.WARN_AT] = ("float", warn_at)
+        engine, _, _ = make(mib)
+        return by_key(engine.cycle())
+
+    def test_a_full_battery_is_ok(self):
+        r = self.battery(100.0)
+        self.assertEqual(r["ups.battery"].nvalue, model.OK)
+        self.assertEqual(r["ups.battery"].svalue, "100 % charge (warning at 30 %)")
+        self.assertEqual(r["ups.battery"].kind, "alert")
+
+    def test_at_or_below_the_ups_own_warning_threshold_it_turns_yellow(self):
+        self.assertEqual(self.battery(31.0)["ups.battery"].nvalue, model.OK)
+        self.assertEqual(self.battery(30.0)["ups.battery"].nvalue, model.WARN)
+        low = self.battery(12.0)["ups.battery"]
+        self.assertEqual(low.nvalue, model.WARN)
+        self.assertEqual(low.svalue, "12 % charge (warning at 30 %)")
+
+    def test_without_a_threshold_there_is_no_alert_but_the_charge_stays(self):
+        r = self.battery(12.0, warn_at=None)
+        self.assertNotIn("ups.battery", r)
+        self.assertEqual(r["ups.charge"].svalue, "12.0")
+
+    def test_no_ups_no_alert(self):
+        engine, _, _ = make(mibdata.ds218())
+        self.assertFalse([k for k in by_key(engine.cycle()) if k.startswith("ups.")])
+
+
 class RateTests(unittest.TestCase):
     def test_64bit_rate_in_mbit(self):
         engine, client, clock = make(mibdata.ds920())

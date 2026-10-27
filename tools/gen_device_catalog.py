@@ -28,7 +28,7 @@ RATE_HINT = "(rate: first value after the second poll)"
 def readings_at(builder, level):
     engine, _, _ = make(builder(), level=level)
     result = engine.cycle()
-    return result.info, {r.key: r for r in result.readings}
+    return result.info, {r.key: r for r in list(result.readings) + list(result.health)}   # health: the plugin's own devices
 
 
 def catalogue(builder):

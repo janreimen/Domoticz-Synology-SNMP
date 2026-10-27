@@ -85,11 +85,13 @@ DISK_STATUS = {
     6: ("Disconnected", ALERT),
 }
 
+# diskHealthStatus, DSM 7.1+.  The Synology guide lists the values in rising severity, so "Failing" (the disk is
+# failing) is at least as bad as "Critical" (a serious condition): both are red.
 DISK_HEALTH = {
     1: ("Healthy", OK),
     2: ("Warning", WARN),
     3: ("Critical", CRIT),
-    4: ("Failing", ALERT),
+    4: ("Failing", CRIT),
 }
 
 RAID_STATUS = {

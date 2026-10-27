@@ -62,7 +62,7 @@ Nothing is changed when a step before the copy fails (for instance when the back
 | `--rollback` | | restore the newest backup |
 | `--install-deps` | | install the `snmp` package when the tools are missing |
 | `--verify NAS` | | run the discovery CLI against the NAS afterwards |
-| `--verify-args "ARGS"` | `-c public` | CLI options, e.g. `"-v 3 -u monitor -A passphrase"` |
+| `--verify-args "ARGS"` | `-c public` | CLI options. Not for secrets: a passphrase here is visible in the process list and the shell history (the script warns and masks it in its output). For SNMPv3 run the CLI yourself, see step 4 |
 | `--service NAME` | `domoticz` | systemd service to restart |
 | `--restart-cmd CMD` | | run CMD on the target instead (init.d, docker restart, ...) |
 | `--no-restart` | | do not restart Domoticz |
@@ -74,7 +74,8 @@ Exit status: `0` success, `1` error (nothing was changed if it happened before t
 
 The script opens two SSH connections (upload, then run). Use key authentication, or `ControlMaster auto` in
 `~/.ssh/config`, to avoid being asked twice. Credentials given with `--verify-args` are visible in the process list
-of the target while the check runs; for a shared host use the Domoticz hardware page instead and look at the log.
+of both machines while the check runs and stay in the shell history; the script warns about it. For SNMPv3 run the check
+yourself with prompts (step 4) or use the Domoticz hardware page and look at the log.
 
 ## 2. By hand
 
@@ -101,7 +102,10 @@ next to it (Domoticz loads every `plugin.py` it finds one level below `plugins/`
 ## 3. Add the hardware
 
 1. *Setup > Hardware*, type **Synology NAS (net-snmp)**, name it (for example `DS1525`).
-2. NAS address, SNMP version and community (or SNMPv3 user and passphrase). Leave the rest at the defaults.
+2. NAS address, SNMP version and community (or SNMPv3 user, passphrase and, if it differs, the privacy passphrase). Leave
+   the rest at the defaults. After an update from 0.2.2 or older the *SNMPv3 privacy passphrase* field may still contain an
+   old number such as `60`: it is ignored (shorter than 8 characters). It is a password field, so you cannot see it: clear
+   the field before you type a passphrase into it, otherwise the old number becomes the start of the passphrase.
 3. *Add*. The first poll creates the devices; the log shows `Connected to Synology <model> (<DSM version>)`.
 
 All fields are explained in the [README](README.md#settings).
@@ -114,7 +118,7 @@ Without Domoticz, from the plugin directory:
 cd /srv/domoticz/plugins/Domoticz-Synology-SNMP
 python3 -m synoSNMP NAS_IP -c public                       # table of everything the plugin would create
 python3 -m synoSNMP NAS_IP -c public --rates 10            # also shows network and disk I/O rates (second sample after 10 s)
-python3 -m synoSNMP NAS_IP -v 3 -u monitor -A 'auth passphrase' -X 'privacy passphrase'
+python3 -m synoSNMP NAS_IP -v 3 -u monitor -A - -X -     # SNMPv3: asks for the passphrases (needs a terminal: ssh -t)
 python3 -m synoSNMP NAS_IP --json --level 1                # machine readable
 ```
 

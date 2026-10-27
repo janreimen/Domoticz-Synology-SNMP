@@ -49,7 +49,9 @@ Actions
   --rollback            restore the newest backup instead of deploying
   --install-deps        apt-get install snmp on the target if the tools are missing
   --verify NAS_HOST     after deploying run "python3 -m synoSNMP NAS_HOST" on the target
-  --verify-args "ARGS"  options for that run (default: "${VERIFY_ARGS}"), e.g. "-v 3 -u monitor -A secret"
+  --verify-args "ARGS"  options for that run (default: "${VERIFY_ARGS}"), e.g. "-v 3 -u monitor -A secret".
+                        A passphrase given here is visible in the process list and the shell history of both
+                        machines: for SNMPv3 run the CLI yourself instead (ssh -t HOST, then "-A - -X -" prompts).
 
 Domoticz
   --service NAME        systemd service to restart (default: ${SERVICE})
@@ -75,6 +77,29 @@ source_version() {
     sed -n 's/^__version__ = "\(.*\)"$/\1/p' "${SRC}/synoSNMP/__init__.py" | head -n1
 }
 
+# Options of the discovery CLI that take a secret.  A secret given as a value is visible in the process list and in the
+# shell history, so --verify-args is checked for them; the value is hidden in everything this script prints.
+mask_secret_args() {
+    local words=() out=() w prev=""
+    read -r -a words <<<"$1"
+    for w in ${words[@]+"${words[@]}"}; do
+        case "$prev" in
+            -A|-X|--auth-pass|--priv-pass) [ "$w" = "-" ] || w="***" ;;
+            -c|--community)                [ "$w" = "-" ] || [ "$w" = "public" ] || w="***" ;;   # "public" is not a secret
+        esac
+        case "$w" in
+            --auth-pass=*|--priv-pass=*) [ "${w#*=}" = "-" ] || w="${w%%=*}=***" ;;
+            --community=*)               [ "${w#*=}" = "-" ] || [ "${w#*=}" = "public" ] || w="${w%%=*}=***" ;;
+            --*)                         ;;
+            -A?*|-X?*)                   [ "${w:2}" = "-" ] || w="${w:0:2}***" ;;
+            -c?*)                        [ "${w:2}" = "-" ] || [ "${w:2}" = "public" ] || w="${w:0:2}***" ;;
+        esac
+        out+=("$w")
+        prev="$w"
+    done
+    printf '%s' "${out[*]-}"
+}
+
 # ---- arguments -----------------------------------------------------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -93,9 +118,15 @@ while [ $# -gt 0 ]; do
         --rollback)      ROLLBACK=1; shift ;;
         -V|--version)    source_version; exit 0 ;;
         -h|--help)       usage; exit 0 ;;
-        *)               usage >&2; die "unknown option: $1" ;;
+        -*)              usage >&2; die "unknown option: ${1%%[= ]*}" ;;      # never echo a value that may be a secret
+        *)               usage >&2; die "unexpected argument (not an option; values are never repeated here)" ;;
     esac
 done
+
+if [ "$(mask_secret_args "$VERIFY_ARGS")" != "$VERIFY_ARGS" ]; then
+    printf 'warning: --verify-args carries a passphrase or community on the command line: it is visible in the process list and the shell history.\n' >&2
+    printf 'warning: for SNMPv3 run the check yourself ("ssh -t HOST", then python3 -m synoSNMP NAS -v 3 -u USER -A - -X -) and let it ask.\n' >&2
+fi
 
 case "$KEEP" in ''|*[!0-9]*) die "--keep must be a number" ;; esac
 [ "$KEEP" -ge 1 ] || die "--keep must be at least 1"
@@ -261,7 +292,7 @@ restart
 # 5. verify -----------------------------------------------------------------------------
 if [ -n "$VERIFY_HOST" ]; then
     if [ "$DRY" = 1 ]; then
-        say "  [dry-run] verify: python3 -m synoSNMP $VERIFY_HOST $VERIFY_ARGS --level 1"
+        say "  [dry-run] verify: python3 -m synoSNMP $VERIFY_HOST $VERIFY_ARGS_SHOWN --level 1"
     else
         say "Verify : python3 -m synoSNMP $VERIFY_HOST --level 1"
         # PYTHONDONTWRITEBYTECODE: do not leave a __pycache__ owned by the wrong user in the plugin directory
@@ -304,6 +335,7 @@ add_env INSTALL_DEPS "$INSTALL_DEPS"
 add_env ROLLBACK "$ROLLBACK"
 add_env VERIFY_HOST "$VERIFY_HOST"
 add_env VERIFY_ARGS "$VERIFY_ARGS"
+add_env VERIFY_ARGS_SHOWN "$(mask_secret_args "$VERIFY_ARGS")"      # what may be printed
 add_env MANAGED "$MANAGED"
 add_env NEW_VERSION "$NEW_VERSION"
 add_env STAGE "$STAGE"

@@ -1,16 +1,22 @@
 """Command line front end: detect a NAS and print what the plugin would create.
 
     python3 -m synoSNMP NAS_IP -c public
-    python3 -m synoSNMP NAS_IP -v 3 -u monitor -A 'auth passphrase' -X 'priv passphrase'
+    python3 -m synoSNMP NAS_IP -v 3 -u monitor -A - -X -           # prompts for the passphrases
 
 Runs exactly the engine the Domoticz plugin uses, without Domoticz.  Useful after
 a deployment, and to see why a device is (not) created.
+Secrets: a passphrase or community given on the command line is visible in the process list and the shell history.
+Pass ``-`` as the value to be prompted instead, or set SYNO_SNMP_COMMUNITY / SYNO_SNMP_AUTH_PASS /
+SYNO_SNMP_PRIV_PASS in the environment.
+
 Exit status: 0 ok, 2 NAS unreachable, 3 not a Synology, 1 other error.
 """
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 import sys
 import time
 from typing import Callable, List, Optional, TextIO
@@ -25,14 +31,18 @@ LEVEL_NAMES = {0: "n/a", 1: "OK", 2: "WARN", 3: "ALERT", 4: "CRIT"}
 
 
 def build_parser() -> argparse.ArgumentParser:
+    env = os.environ.get
     p = argparse.ArgumentParser(prog="python3 -m synoSNMP", description=__doc__.split("\n\n")[0])
     p.add_argument("host", help="NAS address")
     p.add_argument("-p", "--port", default="161")
     p.add_argument("-v", "--version", default="2c", choices=["1", "2c", "3"], help="SNMP version (default 2c)")
-    p.add_argument("-c", "--community", default="public", help="v1/v2c community")
+    p.add_argument("-c", "--community", default=env("SYNO_SNMP_COMMUNITY", "public"),
+                   help="v1/v2c community; '-' prompts (default: $SYNO_SNMP_COMMUNITY or public)")
     p.add_argument("-u", "--user", default="", help="SNMPv3 user")
-    p.add_argument("-A", "--auth-pass", default="", help="SNMPv3 authentication passphrase")
-    p.add_argument("-X", "--priv-pass", default="", help="SNMPv3 privacy passphrase (default: same as -A)")
+    p.add_argument("-A", "--auth-pass", default=env("SYNO_SNMP_AUTH_PASS", ""),
+                   help="SNMPv3 authentication passphrase; '-' prompts (default: $SYNO_SNMP_AUTH_PASS)")
+    p.add_argument("-X", "--priv-pass", default=env("SYNO_SNMP_PRIV_PASS", ""),
+                   help="SNMPv3 privacy passphrase; '-' prompts (default: $SYNO_SNMP_PRIV_PASS, else same as -A)")
     p.add_argument("-l", "--v3-level", default="authPriv", help="noAuthNoPriv | authNoPriv | authPriv")
     p.add_argument("-a", "--auth-proto", default="SHA")
     p.add_argument("-x", "--priv-proto", default="AES")
@@ -45,12 +55,20 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def settings_from_args(a: argparse.Namespace) -> Settings:
-    params = {"Address": a.host, "Port": a.port, "Mode1": a.community, "Mode2": a.version,
-              "Mode4": "10", "Mode5": str(a.level), "Username": a.user, "Password": a.auth_pass,
-              "Mode3": "%s;%s;%s;%s" % (a.v3_level, a.auth_proto, a.priv_proto, a.priv_pass),
+def _secret(value: str, label: str, prompt: Callable[[str], str]) -> str:
+    """``-`` means "ask me": the value then never appears in the process list or the shell history."""
+    return prompt("%s: " % label) if value == "-" else value
+
+
+def settings_from_args(a: argparse.Namespace, prompt: Callable[[str], str] = getpass.getpass) -> Settings:
+    community = _secret(a.community, "SNMP community", prompt)
+    auth = _secret(a.auth_pass, "SNMPv3 authentication passphrase", prompt)
+    priv = _secret(a.priv_pass, "SNMPv3 privacy passphrase", prompt)
+    params = {"Address": a.host, "Port": a.port, "Mode1": community, "Mode2": a.version,
+              "Mode3": "%s;%s;%s" % (a.v3_level, a.auth_proto, a.priv_proto), "Mode4": priv,
+              "Mode5": str(a.level), "Username": a.user, "Password": auth,
               "Mode6": "Debug" if a.debug else "Normal"}
-    return Settings.from_parameters(params)
+    return Settings.from_parameters(params, mode4_may_be_stale=False)
 
 
 def describe(r: Reading) -> str:
@@ -72,17 +90,20 @@ def render(result: CycleResult, info: dict, out: TextIO) -> None:
     for r in result.readings:
         out.write("%-*s  %-*s  %-11s %s%s\n" % (width, r.key, name_width, r.name, r.kind, describe(r),
                                                  "" if r.used else "   (hidden by default)"))
+    for r in result.health[:1]:
+        out.write("\nPlugin health: %s\n" % describe(r))
 
 
 def main(argv: Optional[List[str]] = None, out: TextIO = sys.stdout, err: TextIO = sys.stderr,
          client_factory: Optional[Callable[[Settings], SnmpClient]] = None,
-         sleep: Callable[[float], None] = time.sleep) -> int:
+         sleep: Callable[[float], None] = time.sleep,
+         prompt: Callable[[str], str] = getpass.getpass) -> int:
     try:
         args = build_parser().parse_args(argv)
     except SystemExit as exc:                       # argparse exits with 2 for bad options; 2 means "NAS silent" here
         return 0 if exc.code in (0, None) else 1
     try:
-        settings = settings_from_args(args)
+        settings = settings_from_args(args, prompt)
         settings.timeout, settings.retries = 3, 1
         client = (client_factory or SnmpClient)(settings)
     except SettingsError as exc:
@@ -91,13 +112,19 @@ def main(argv: Optional[List[str]] = None, out: TextIO = sys.stdout, err: TextIO
     except SnmpUnavailable as exc:
         err.write("%s\n" % exc)
         return 1
+    except (EOFError, KeyboardInterrupt):           # a passphrase prompt without a terminal, or Ctrl-C at the prompt
+        err.write("Passphrase input cancelled.\n")
+        return 1
 
     try:
+        for warning in settings.warnings:
+            err.write("WARNING: %s\n" % warning)
         engine = Engine(settings, client)
         result = engine.cycle()
         if args.rates and result.reachable and not result.fatal:
             sleep(args.rates)
-            again = engine.cycle()
+            # forced: the second sample must not be skipped by the collectors' own (longer) schedules
+            again = engine.cycle(force=True)
             again.messages = result.messages + again.messages
             result = again
 
@@ -115,6 +142,7 @@ def main(argv: Optional[List[str]] = None, out: TextIO = sys.stdout, err: TextIO
 
         if args.json:
             json.dump({"model": engine.info.get("model"), "version": engine.info.get("version"),
+                       "health": [{"key": r.key, "level": r.nvalue, "value": r.svalue} for r in result.health[:1]],
                        "devices": [{"key": r.key, "name": r.name, "kind": r.kind, "value": r.svalue, "level": r.nvalue,
                                     "unit": r.unit, "visible": r.used, "pending": r.pending} for r in result.readings]},
                       out, indent=2)

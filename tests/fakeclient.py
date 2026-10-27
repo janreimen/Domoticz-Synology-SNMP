@@ -20,6 +20,7 @@ class FakeClient(SnmpClient):
         self.mib = mib
         self.down = False          # simulate an unreachable agent
         self.fail_prefixes = []    # OID prefixes that raise a plain SnmpError
+        self.timeout_prefixes = [] # OID prefixes that raise SnmpTimeout (a request that is never answered)
 
     def _vb(self, oid: str) -> P.Varbind:
         vtype, value = self.mib.data[oid]
@@ -28,6 +29,9 @@ class FakeClient(SnmpClient):
     def _check(self, oid: str) -> None:
         if self.down:
             raise SnmpTimeout("Timeout: No Response from fake")
+        for p in self.timeout_prefixes:
+            if oid.startswith(p):
+                raise SnmpTimeout("Timeout: No Response from fake for %s" % oid)
         from synoSNMP.snmpcli import SnmpError
         for p in self.fail_prefixes:
             if oid.startswith(p):

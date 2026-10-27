@@ -44,6 +44,17 @@ class RealNetSnmpTests(unittest.TestCase):
         self.assertIsNone(c.get("1.3.6.1.4.1.6574.1.9.9.0"))
         self.assertEqual(len(c.table("1.3.6.1.4.1.6574.2.1.1")), 6)
 
+    def test_snmpv1_get_with_present_and_absent_objects_in_one_request(self):
+        """SNMPv1 rejects a whole GET that names a missing object (noSuchName).  The net-snmp tool retries without
+        the offending object itself, so the present ones still come back, in one call.  (Checked against a real agent:
+        no client-side workaround is needed.)"""
+        c = SnmpClient(self.settings(version="1"))
+        present = ["1.3.6.1.4.1.6574.1.1.0", "1.3.6.1.4.1.6574.1.5.1.0"]
+        before = c.calls
+        got = c.get_many([present[0], "1.3.6.1.4.1.6574.1.9.9.0", present[1]])
+        self.assertEqual(sorted(got), sorted(present))
+        self.assertEqual(c.calls - before, 1)
+
     def test_snmpv3_authpriv(self):
         c = SnmpClient(self.settings(version="3", v3_user="synov3", v3_level="authPriv", v3_auth_proto="SHA",
                                      v3_auth_pass="longpassphrase1", v3_priv_proto="AES", v3_priv_pass="longpassphrase2"))
@@ -119,7 +130,7 @@ class PluginTests(unittest.TestCase):
         sys.modules.pop("plugin", None)
         plugin = importlib.import_module("plugin")
         plugin.Parameters = {"Address": "127.0.0.1", "Port": str(self.snmpd.port), "Mode1": "public", "Mode2": "2c",
-                             "Mode4": "10", "Mode5": "3", "Mode6": "Trace"}
+                             "Mode5": "3", "Mode6": "Trace"}
         plugin.Parameters.update(params)
         plugin.Devices = dz.Devices
         # Domoticz injects these four globals into the plugin module; the real `Settings` is a dict of
@@ -154,6 +165,36 @@ class PluginTests(unittest.TestCase):
         self.assertTrue(any(l == "heartbeat" for l, _ in dz.logs))
         self.assertFalse(plugin._plugin.poller)                             # poller thread joined
 
+    V3 = dict(Mode2="3", Username="synov3", Password="longpassphrase1", Mode3="authPriv;SHA;AES")
+
+    def test_snmpv3_privacy_passphrase_field_is_used(self):
+        """The agent's privacy passphrase differs from its authentication passphrase, so this only works when the
+        'SNMPv3 privacy passphrase' field (Mode4) really reaches net-snmp."""
+        plugin = self.load_plugin(Mode4="longpassphrase2", **self.V3)
+        plugin.onStart()
+        try:
+            self.wait_for_results(plugin)
+            plugin.onHeartbeat()
+        finally:
+            plugin.onStop()
+        self.assertEqual([t for l, t in dz.logs if l == "error"], [])
+        ids = {d.DeviceID: d for d in dz.Devices.values()}
+        self.assertEqual(ids["sys.info"].sValue, "DS920+  |  DSM 7.2.1-69057 Update 5")
+        self.assertEqual(ids["plugin.health"].nValue, 1)
+
+    def test_snmpv3_without_the_field_falls_back_to_the_authentication_passphrase(self):
+        plugin = self.load_plugin(**self.V3)                                 # no Mode4: priv passphrase := auth passphrase
+        plugin.onStart()
+        try:
+            plugin._plugin.poller.engine.client.s.timeout = 1
+            self.wait_for_results(plugin, timeout=40)
+            plugin.onHeartbeat()
+        finally:
+            plugin.onStop()
+        self.assertTrue([t for l, t in dz.logs if l == "error"])
+        health = [d for d in dz.Devices.values() if d.DeviceID == "plugin.health"][0]
+        self.assertEqual(health.nValue, 4)
+
     def test_bad_configuration_is_reported_not_raised(self):
         plugin = self.load_plugin(Address="")
         plugin.onStart()
@@ -172,7 +213,12 @@ class PluginTests(unittest.TestCase):
         finally:
             plugin.onStop()
         self.assertTrue(any(l == "error" and "No SNMP answer" in t for l, t in dz.logs))
-        self.assertEqual(dz.Devices, {})
+        # Only the plugin's own health devices exist, and they say what is wrong.
+        self.assertEqual(sorted(d.DeviceID for d in dz.Devices.values()), ["plugin.health", "plugin.pollsecs"])
+        health = [d for d in dz.Devices.values() if d.DeviceID == "plugin.health"][0]
+        self.assertEqual(health.nValue, 4)                                  # CRIT -> red alert
+        self.assertIn("NAS not answering", health.sValue)
+        self.assertEqual(health.TimedOut, 0)
 
 
 if __name__ == "__main__":

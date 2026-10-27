@@ -1,0 +1,69 @@
+name: release
+
+# Pushing a tag such as v0.2.3 (digits only, see checklist.md) builds the package and publishes it as a GitHub
+# release with the CHANGELOG entry as its text.  Safe to re-run: an existing release only gets its archive replaced.
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # create the release and upload the archive; nothing else in this repository
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag, the manifest, __version__ and the CHANGELOG must agree
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          case "$version" in
+            *[!0-9.]*|""|.*|*.) echo "::error::tag '$TAG' is not plain digits (v1.2.3)"; exit 1 ;;
+          esac
+          pkg="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' synoSNMP/__init__.py)"
+          manifest="$(sed -n 's/^<plugin .* version="\([^"]*\)".*$/\1/p' plugin.py | head -n1)"
+          top="$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*$/\1/p' CHANGELOG.md | head -n1)"
+          echo "tag=$version package=$pkg manifest=$manifest changelog=$top"
+          [ "$pkg" = "$version" ] && [ "$manifest" = "$version" ] && [ "$top" = "$version" ] \
+            || { echo "::error::version mismatch: tag $version, __init__ $pkg, plugin.py $manifest, CHANGELOG $top"; exit 1; }
+      - name: net-snmp client tools and snmpd (for the end-to-end tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y snmp snmpd
+          sudo systemctl stop snmpd || true
+      - name: Tests
+        run: python -m unittest discover -s tests
+      - name: Package
+        run: make package
+      - name: Release notes from the CHANGELOG
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/       { exit }
+            found                   { print }
+          ' CHANGELOG.md | sed -e '/./,$!d' > "$RUNNER_TEMP/notes.md"
+          [ -s "$RUNNER_TEMP/notes.md" ] || { echo "::error::no CHANGELOG text for $version"; exit 1; }
+          cat "$RUNNER_TEMP/notes.md"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="$(ls dist/*.tar.gz)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$archive" --clobber
+          else
+            gh release create "$TAG" "$archive" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+          fi

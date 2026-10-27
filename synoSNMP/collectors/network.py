@@ -36,7 +36,6 @@ class NetworkCollector(Collector):
     def __init__(self, ctx) -> None:
         super().__init__(ctx)
         self.ports: Dict[str, str] = {}     # ifIndex -> ifName
-        self._use_32bit: Dict[str, bool] = {}
 
     # -- discovery -------------------------------------------------------------
     def discover(self, client: SnmpClient) -> None:
@@ -45,7 +44,6 @@ class NetworkCollector(Collector):
             names = {vb.oid.rsplit(".", 1)[-1]: vb.as_text() for vb in client.walk(oids.IF_TABLE + ".2")}
         types = {vb.oid.rsplit(".", 1)[-1]: vb.as_int() for vb in client.walk(oids.IF_TABLE + ".3")}
         self.ports = {idx: name for idx, name in names.items() if is_hardware_port(name, types.get(idx))}
-        self._use_32bit.clear()
         self.ctx.rates.forget_all()
         self.ctx.debug("network ports: %s" % ", ".join("%s=%s" % kv for kv in sorted(self.ports.items(), key=lambda kv: natural_key(kv[0]))))
 
@@ -97,7 +95,6 @@ class NetworkCollector(Collector):
         fallback = []
         for idx in self.ports:
             if oids.IF_XTABLE + ".6." + idx not in got:
-                self._use_32bit[idx] = True
                 fallback += [oids.IF_TABLE + ".10." + idx, oids.IF_TABLE + ".16." + idx]
         if fallback:
             got.update(client.get_many(fallback))

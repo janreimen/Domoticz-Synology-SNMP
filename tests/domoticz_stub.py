@@ -30,10 +30,12 @@ class StubDevice:
         self.TimedOut = 0
         self.updates = 0
 
-    def Update(self, nValue, sValue, TimedOut=None, **_):
+    def Update(self, nValue, sValue, TimedOut=None, Options=None, **_):
         self.nValue, self.sValue = nValue, sValue
         if TimedOut is not None:
             self.TimedOut = TimedOut
+        if Options is not None:                      # Domoticz replaces the whole Options dictionary
+            self.Options = dict(Options)
         self.updates += 1
 
 
