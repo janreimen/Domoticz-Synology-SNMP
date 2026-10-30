@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.2.4] - 2026-10-29
+
+Baseline: 0.2.3. No behaviour changes for a NAS that runs all the time.
+
+### Added
+- **A NAS that is switched off on a schedule.** `EXPECTED_OFFLINE=23:30-12:00` in `.env` names the hours in which the
+  NAS is meant to be off (local time of the Domoticz host, may cross midnight). Until now the plugin logged "No SNMP
+  answer" as an error every night. While a silent NAS is inside that window, or inside the grace period after it
+  (`EXPECTED_OFFLINE_GRACE`, default 900 s, 0-86400, so that DSM can boot and start SNMP):
+  - no error is logged; one *notice* (shown at every logging level) says that the silence is expected and when it
+    would become an outage, and one notice says that the NAS is back;
+  - the *Plugin Health* device is grey and says why (*NAS switched off on schedule*, *Waiting for the NAS to start*);
+  - the devices keep their last values and are not flagged timed out;
+  - polling slows down to one probe every 5 minutes and wakes up when the window ends (in the grace period the normal
+    tick applies again).
+
+  A NAS that answers inside the window is polled normally. A NAS that is still silent after the grace period is an
+  outage as before: one error, red health device, devices flagged timed out. The failure time decides, not the start
+  of the poll that failed, so a shutdown in the middle of a poll is judged correctly. The command line tool ignores
+  the schedule. An invalid window is a configuration error; `EXPECTED_OFFLINE_GRACE` without `EXPECTED_OFFLINE` is
+  reported as a configuration warning.
+- `CycleResult.expected_off` and `CycleResult.wait` (a cycle may ask the poller for a different pause than the tick),
+  and an optional `wall` clock for `Engine`.
+- New module `synoSNMP/offline.py`; tests in `tests/test_offline.py` (45).
+
+### Changed
+- The Debug "next poll in about ..." line uses the requested pause.
+
 ## [0.2.3] - 2026-10-25
 
 Every item under *Fixed* was reproduced against 0.2.2 by running the code (scheduler timelines on the fixture NAS,
@@ -186,6 +214,7 @@ Complete rewrite of the old pysnmp-based *Synology Monitor* plugin.
   logged once, and their recovery once.
 - Modular code: parser, client, collectors, engine, device layer and plugin glue are separate modules.
 
+[0.2.4]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.4
 [0.2.3]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.3
 [0.2.2]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.2
 [0.2.1]: https://github.com/janreimen/Domoticz-Synology-SNMP/releases/tag/v0.2.1

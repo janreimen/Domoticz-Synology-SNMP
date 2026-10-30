@@ -1,5 +1,5 @@
 """
-<plugin key="SynologySNMP" name="Synology NAS (net-snmp)" author="janreimen" version="0.2.3">
+<plugin key="SynologySNMP" name="Synology NAS (net-snmp)" author="janreimen" version="0.2.4">
     <description>
         <h2>Synology NAS monitor</h2><br/>
         Reads a Synology NAS through the native net-snmp command line tools (snmpget / snmpbulkwalk).
@@ -13,6 +13,7 @@
         </ul>
         <h3>Polling intervals and tuning</h3>
         Polling intervals (and the SNMP timeout / retries) are set in the plugin directory's <tt>.env</tt> file. Copy <tt>.env.sample</tt> to <tt>.env</tt>; interval values are in seconds.
+        A NAS that is switched off on a schedule (for example at night): set <tt>EXPECTED_OFFLINE</tt> there, so that its silence is not logged as an error.
         <h3>SNMPv3</h3>
         Fill in Username and Password (authentication passphrase, min. 8 characters). "SNMPv3 options" is
         <tt>level;authProtocol;privProtocol</tt>, for example <tt>authPriv;SHA;AES</tt>. Enter the privacy passphrase in its own
@@ -98,6 +99,10 @@ class BasePlugin:
         Domoticz.Log("Synology SNMP plugin %s starting" % __version__)
         for warning in self.settings.warnings:
             Domoticz.Log("Configuration warning: %s" % warning)
+        window = self.settings.offline_window
+        if window is not None:
+            Domoticz.Log("%s is switched off on schedule (%s, EXPECTED_OFFLINE): its silence is not an error, until %s" % (
+                self.settings.host, window.label, window.deadline_label))
 
         try:
             client = SnmpClient(self.settings, trace=self._trace if self.settings.log_level >= 3 else None)
@@ -163,7 +168,8 @@ class BasePlugin:
             Domoticz.Debug("TRACE: applying poll result: reachable=%s fatal=%s readings=%d present_keys=%d ran_groups=%s" % (
                 latest.reachable, latest.fatal, len(latest.readings), len(latest.present_keys),
                 ",".join(sorted(latest.ran_groups)) or "none"))
-        if not latest.reachable:
+        if not latest.reachable and not latest.expected_off:
+            # A NAS that is meant to be off keeps its last values: flagging everything red every night is noise.
             self.manager.mark_all_timed_out()
         self.manager.apply(latest)
         if latest.fatal:
@@ -202,7 +208,8 @@ class BasePlugin:
             elif level_setting >= 2:                    # "info" and "debug": identity, serial, detection notes
                 Domoticz.Log(text)
         if level_setting >= 2:
-            next_poll = max(1, int(round(self._tick - result.duration)))
+            period = result.wait if result.wait is not None else self._tick
+            next_poll = max(1, int(round(period - result.duration)))
             Domoticz.Log("Poll complete: %d readings, %d SNMP calls, %.2fs; next poll in about %ds" % (
                 len(result.readings), result.snmp_calls, result.duration, next_poll))
         if level_setting >= 3:

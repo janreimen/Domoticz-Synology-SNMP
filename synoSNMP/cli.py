@@ -105,6 +105,7 @@ def main(argv: Optional[List[str]] = None, out: TextIO = sys.stdout, err: TextIO
     try:
         settings = settings_from_args(args, prompt)
         settings.timeout, settings.retries = 3, 1
+        settings.offline_window = None              # a diagnostic run reports a silent NAS as silent, whatever the schedule
         client = (client_factory or SnmpClient)(settings)
     except SettingsError as exc:
         err.write("Configuration error: %s\n" % exc)

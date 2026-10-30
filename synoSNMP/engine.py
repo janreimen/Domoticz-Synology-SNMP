@@ -6,6 +6,10 @@ tested with a fake SNMP client.
 
 Failure policy
     * no SNMP answer      -> the whole cycle is "unreachable" (one log line, not one per poll)
+                             -- unless the NAS is meant to be off at this hour (EXPECTED_OFFLINE, or the grace
+                             period after it): then the silence is announced once as a notice, is no error,
+                             the Plugin Health device is grey, polling slows to a probe every few minutes and
+                             the devices are not flagged timed out
     * a collector errors  -> only that collector's devices are skipped, the rest carry on;
                              the collector is retried with an increasing delay.  Its old values are
                              not replayed (that would keep them looking fresh); the devices keep their
@@ -27,12 +31,14 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from . import oids
 from .collectors import Collector, Context, build_collectors
 from .config import Settings
-from .model import CRIT, OK, WARN, Reading
+from .model import CRIT, NONE, OK, WARN, Reading
+from .offline import GRACE, INSIDE, OUTSIDE
 from .snmpcli import SnmpClient, SnmpError, SnmpTimeout, SnmpUnavailable
 
 # (level, text) with level in "debug" | "info" | "notice" | "error".
@@ -42,6 +48,7 @@ Message = Tuple[str, str]
 SCHEDULE_SLACK = 0.25        # seconds: timing jitter tolerated when deciding that a schedule is due
 BACKOFF_BASE_MAX = 300       # first retry of a failed collector: min(its interval, this) seconds
 BACKOFF_CAP_MIN = 300        # retries never wait longer than max(its interval, this) seconds
+OFFLINE_PROBE_SECONDS = 300  # while the NAS is meant to be off: ask this often whether it is back (it wakes up at the end of the window)
 
 
 class NotSynology(SnmpError):
@@ -62,16 +69,20 @@ class CycleResult:
     snmp_calls: int = 0
     health: List[Reading] = field(default_factory=list)     # the plugin's own devices; written even when the NAS is down
     stale_groups: Set[str] = field(default_factory=set)     # failing collectors whose last good data is too old: flag their devices
+    expected_off: bool = False      # silent, but meant to be (scheduled off period or boot grace): not an outage
+    wait: Optional[float] = None    # seconds from the start of this cycle to the next one; None = the scheduler tick
 
 
 class Engine:
     def __init__(self, settings: Settings, client: SnmpClient,
                  collectors: Optional[Sequence[Collector]] = None,
                  clock: Callable[[], float] = time.monotonic,
-                 trace: Optional[Callable[[str], None]] = None) -> None:
+                 trace: Optional[Callable[[str], None]] = None,
+                 wall: Callable[[], datetime] = datetime.now) -> None:
         self.settings = settings
         self.client = client
         self.clock = clock
+        self._wall = wall                                 # local wall clock, only for the scheduled off period
         self._trace = trace
         self.ctx = Context(settings, clock)
         self.collectors: List[Collector] = list(collectors) if collectors is not None else build_collectors(self.ctx)
@@ -98,6 +109,8 @@ class Engine:
         self._fails: Dict[str, int] = {}                  # collector name -> consecutive failures
         self._retry_at: Dict[str, float] = {}             # collector name -> do not run before (cycle-start clock)
         self._failing_since: Dict[str, float] = {}        # collector name -> cycle start of its first failure in a row
+        self._off_announced = False                       # the scheduled silence was announced; announce the return, too
+        self._offline_phase_seen = OUTSIDE                # phase (INSIDE / GRACE) at the last expected silence
 
     # -- public ---------------------------------------------------------------------
     def cycle(self, force: bool = False) -> CycleResult:
@@ -119,9 +132,13 @@ class Engine:
             result.reachable = False
             result.messages.append(("error", str(exc)))
         except SnmpTimeout as exc:
-            self._lost(result, "No SNMP answer from %s:%d (%s). Check address, community/credentials, "
-                       "that SNMP is enabled in DSM and that this host is allowed to query it."
-                       % (self.settings.host, self.settings.port, exc))
+            phase = self._offline_phase()
+            if phase == OUTSIDE:
+                self._lost(result, "No SNMP answer from %s:%d (%s). Check address, community/credentials, "
+                           "that SNMP is enabled in DSM and that this host is allowed to query it."
+                           % (self.settings.host, self.settings.port, exc))
+            else:
+                self._expected_silence(result, phase)
         except SnmpError as exc:
             self._problem(result, "snmp", "SNMP request failed: %s" % exc)
             if isinstance(exc, NotSynology):
@@ -140,6 +157,10 @@ class Engine:
             result.ran_groups.clear()
             result.stale_groups.clear()
         result.info = dict(self.info)
+        if result.expected_off and self._offline_phase_seen == INSIDE:
+            # Nobody is home: ask again every few minutes, but be on time when the window ends.
+            window = self.settings.offline_window
+            result.wait = max(1.0, min(float(OFFLINE_PROBE_SECONDS), window.seconds_until_end(self._wall())))
         # present_keys intentionally contains only fresh readings from collectors
         # that ran successfully. Cached readings refresh Domoticz values, but must
         # not hide a device that disappeared when its owning collector next runs.
@@ -173,7 +194,12 @@ class Engine:
         self.info = {"model": model.as_text(), "version": version.as_text() if version else ""}
         self._connected = True
         self._last_discovery = None
+        had_outage = "link" in self._open_problems
         self._resolved("link", result, "SNMP connection restored")
+        if self._off_announced:
+            self._off_announced = False
+            if not had_outage:                    # an outage that was reported has its own "restored" notice
+                result.messages.append(("notice", "SNMP connection restored: the NAS is back after its scheduled off period"))
         self._resolved("snmp", result, None)
         self._resolved("engine", result, None)
         connected_message = "Connected to Synology %s%s" % (
@@ -321,6 +347,26 @@ class Engine:
         self._connected = False
         self._problem(result, "link", text)
 
+    # -- a NAS that is switched off on a schedule ------------------------------------------
+    def _offline_phase(self) -> str:
+        window = self.settings.offline_window
+        return window.phase(self._wall()) if window is not None else OUTSIDE
+
+    def _expected_silence(self, result: CycleResult, phase: str) -> None:
+        """No answer, and the NAS is meant to be off (or still booting): not an error.  Announced once."""
+        result.reachable = False
+        result.expected_off = True
+        if self._connected:
+            self.ctx.rates.forget_all()
+        self._connected = False
+        self._offline_phase_seen = phase
+        if not self._off_announced:
+            self._off_announced = True
+            window = self.settings.offline_window
+            result.messages.append(("notice", "%s:%d does not answer, as expected: the NAS is switched off %s. "
+                                    "This is not logged as an error unless it is still silent at %s." % (
+                                        self.settings.host, self.settings.port, window.label, window.deadline_label)))
+
     # -- the plugin's own devices ---------------------------------------------------------
     def _build_health(self, result: CycleResult) -> None:
         failing = [c.name for c in self.collectors if c.name in self._fails]
@@ -328,6 +374,14 @@ class Engine:
             level, text = CRIT, "Polling stopped: " + _first_line(_last_error(result))
         elif result.not_synology:
             level, text = CRIT, "Not a Synology: the Synology MIB is not served"
+        elif result.expected_off:
+            window = self.settings.offline_window
+            if self._offline_phase_seen == GRACE:
+                level, text = NONE, "Waiting for the NAS to start (expected back at %s, outage from %s)" % (
+                    window.back_label, window.deadline_label)
+            else:
+                level, text = NONE, "NAS switched off on schedule (%s), probing every %d min" % (
+                    window.label, OFFLINE_PROBE_SECONDS // 60)
         elif not result.reachable:
             level, text = CRIT, "NAS not answering (no SNMP response)"
         elif "snmp" in self._open_problems or "engine" in self._open_problems:

@@ -29,7 +29,9 @@ class Poller(threading.Thread):
             if result.fatal:
                 self.engine.client.stop()
                 break
-            self._halt.wait(max(1.0, self.interval - (time.monotonic() - started)))
+            # a cycle may ask for a different pause (a NAS that is meant to be off is only probed every few minutes)
+            period = result.wait if result.wait is not None else self.interval
+            self._halt.wait(max(1.0, period - (time.monotonic() - started)))
 
     def stop(self) -> None:
         self._halt.set()

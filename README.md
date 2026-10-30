@@ -11,7 +11,7 @@ A [Domoticz](https://www.domoticz.com) plugin that monitors a **Synology NAS** t
 * **Modular.** Parser, SNMP client, one collector per hardware area, engine and Domoticz glue are separate modules.
   A new area is one new file.
 
-> **Status:** version 0.2.3. Developed and tested against simulated DS920+ / DS218+ data and a real `snmpd`
+> **Status:** version 0.2.4. Developed and tested against simulated DS920+ / DS218+ data and a real `snmpd`
 > serving it, **not yet against a real DSM**. Please read [what is verified and what is not](#what-is-verified-and-what-is-not)
 > and run the check in [First run](#first-run-check-what-your-nas-reports) on your NAS before relying on it.
 
@@ -89,7 +89,7 @@ Run several NAS units by adding the hardware once per NAS. Each gets its own set
 
 | Detail level | Area | Devices |
 |---|---|---|
-| **Basic** | Plugin | **Plugin Health** (green: all collectors work; yellow: some collector fails, named in the text; red: NAS not answering, not a Synology, or polling stopped; the text also shows the SNMP calls and seconds of the last poll) and a hidden **Poll Duration** in seconds. Both keep updating while the NAS is down |
+| **Basic** | Plugin | **Plugin Health** (green: all collectors work; yellow: some collector fails, named in the text; red: NAS not answering, not a Synology, or polling stopped; grey: the NAS does not answer, as expected, because it is switched off on schedule or still booting; the text also shows the SNMP calls and seconds of the last poll) and a hidden **Poll Duration** in seconds. Both keep updating while the NAS is down |
 | | System | system / power / fan / CPU-fan / thermal status (only those the model reports), system temperature, model + DSM version, "DSM update available" |
 | | CPU, memory | CPU %, memory % (without cache and buffers), memory available, swap %, load 1 min, uptime |
 | | Drives | per drive and per cache drive: **health** (DSM status, DSM health, bad sectors and, for SSD/NVMe, remaining life in the text), **temperature**, remaining life; one "Disks Overall" summary. The number of drives comes from the NAS |
@@ -136,6 +136,7 @@ synoSNMP/
   engine.py             connection probe, discovery and collector schedules, collector isolation and back-off,
                         plugin health, de-duplicated error log
   poller.py             background thread
+  offline.py            the scheduled off period of a NAS that is switched off at night (EXPECTED_OFFLINE)
   devices.py            the only module that touches the Domoticz device API
   model.py  util.py     Reading type; key / slug / rate helpers
   cli.py  __main__.py   python3 -m synoSNMP: the engine without Domoticz
@@ -180,6 +181,30 @@ Transport and housekeeping:
 
 These settings follow the existing collector boundaries. Consequently, readings inside one collector share its interval—for example, uptime shares `RESOURCES_INTERVAL`, and DSM update status shares `SYSTEM_INTERVAL`. Separate intervals inside those collectors would require splitting the collector architecture and are not implied by this configuration.
 
+**A NAS that is switched off on a schedule.** If the NAS is powered off every night (with the DSM power schedule, for
+example), tell the plugin when, so that its silence is not logged as an error every day:
+
+| `.env` variable | Meaning | Default | Range |
+|---|---|---:|---|
+| `EXPECTED_OFFLINE` | the hours in which the NAS is off, `HH:MM-HH:MM`, local time of the Domoticz host; may cross midnight. Empty or absent: the NAS is expected to run all the time | (none) | |
+| `EXPECTED_OFFLINE_GRACE` | seconds after the end of the window in which silence is still expected, because DSM needs time to boot and start its SNMP service | 900 | 0–86400 |
+
+For a NAS that shuts down at 23:30 and starts at 12:00: `EXPECTED_OFFLINE=23:30-12:00`. Start the window a minute or
+two before the shutdown time; a poll that is in flight when DSM goes down is judged by the time at which it fails, not
+by the time at which it started. While the NAS does not answer inside the window, and in the grace period after it:
+
+* no error is logged; one notice says that the silence is expected (and at what time it would become an outage), and one
+  notice says that the NAS is back;
+* *Plugin Health* is grey and says why (*NAS switched off on schedule* / *Waiting for the NAS to start*);
+* the devices keep their last values and are **not** flagged timed out;
+* inside the window polling slows down to one probe every 5 minutes and wakes up when the window ends; in the grace
+  period the normal tick applies again.
+
+A NAS that answers inside the window (switched on early, or not shut down tonight) is polled normally. A NAS that is
+still silent when the grace period is over is an outage like any other: one error, a red health device, devices flagged
+timed out. Outside the window nothing changes. The command line tool ignores the schedule and reports a silent NAS as
+silent.
+
 **Polling.** The background thread starts a cycle every *tick* seconds, where the tick is the shortest interval of the
 collectors that exist at the chosen detail level (60 s with the defaults; an interval set for a collector that is not
 built, such as `GPU_INTERVAL` at *Basic*, does not make anything faster). In each cycle only the collectors whose own
@@ -209,7 +234,8 @@ the plugin asks the NAS a trivial question: when that is answered the NAS is up 
 otherwise the NAS is down. A problem is logged **once** and its recovery once, not every poll, and every error is shown
 at every logging level. When the NAS stops answering, all its devices (except the plugin's own health devices) are
 flagged timed out and values resume by themselves when it is back. The **Plugin Health** device shows the current state
-in Domoticz itself, so a broken poller no longer looks like a quiet NAS.
+in Domoticz itself, so a broken poller no longer looks like a quiet NAS. The one exception is a NAS that is meant to be
+off at that hour: see *A NAS that is switched off on a schedule* above.
 
 ## First run: check what your NAS reports
 
@@ -251,12 +277,14 @@ reads, which is all that is needed to reproduce the problem offline. Remove seri
 | `Configuration warning: ... unknown setting X ignored (did you mean Y?)` | a typo in `.env`; the default stays in force until you fix the key |
 | `Configuration error: ... must be a number` / `must be between` | a value in `.env` is not a number or out of range; the hardware does not start until it is fixed |
 | `disks: SNMP error ...` (or another collector name) and the *Plugin Health* device is yellow | that one collector fails (a MIB table the NAS does not serve, a restricted SNMP view, a table that times out); everything else keeps working and the collector is retried with growing delays. `... : working again` follows when it recovers |
+| *Plugin Health* is grey | the NAS does not answer at an hour that `EXPECTED_OFFLINE` names, or within the grace period after it: nothing to fix. If the NAS is up and the device stays grey, check the window and the clock of the Domoticz host; an error follows once the grace period is over |
+| `Configuration error: EXPECTED_OFFLINE must look like 23:30-12:00` | the window in `.env` is not `HH:MM-HH:MM` (24-hour clock, start and end must differ); the hardware does not start until it is fixed |
 | *Plugin Health* is red | `NAS not answering`: see the first row. `Not a Synology`, or `Polling stopped` with the reason (net-snmp tools missing): fix it and disable / enable the hardware |
 | `Device '...' was removed in Domoticz; creating it again` | you deleted a plugin device; clear *Used* instead of deleting to hide it |
 | `All 255 Domoticz units of this hardware are in use` | lower the detail level or delete unused devices |
 | A device you expect is missing | run the command line tool with `--debug`, or set *Debug* and look for the `mounts: ...`, `network ports: ...`, `UPS ...` lines. Compare with `snmpwalk -v2c -c public -On -m "" NAS_IP 1.3.6.1.4.1.6574.2` |
 | A rate device shows nothing | rates need two samples: wait one poll interval |
-| Everything is "timed out" after a NAS reboot | expected while it is down; values resume on their own |
+| Everything is "timed out" after a NAS reboot | expected while it is down (not in a scheduled off period: the devices then keep their last values); values resume on their own |
 
 More on a specific symptom: set *Logging level* to *Debug* for a concise poll summary, or *Trace* to inspect individual SNMP requests/responses and device updates.
 
@@ -268,6 +296,10 @@ objects used here for DSM 6.2.4 and newer; DSM 7.x is what the fixtures imitate.
 MIB as far as is known; that is an expectation, not something tested on hardware.
 
 **Does it need DSM packages or root access on the NAS?** No. It only reads over SNMP.
+
+**My NAS is switched off every night. Will the log show an error every day?** Not if you set `EXPECTED_OFFLINE` in
+`.env` (see *A NAS that is switched off on a schedule*). Without it, a NAS that does not answer is an outage, and the
+plugin reports it as one.
 
 **Why do I see fewer devices than your catalogue?** The catalogue is for simulated hardware, and hidden devices are
 not shown until you add them under *Setup > Devices*.
@@ -300,8 +332,9 @@ real `snmpd` (v1, v2c, v3 including the privacy-passphrase field through the rea
 credentials, aborting a request), the scheduler as the poller runs it (per-collector intervals, hourly detection, back-off,
 timeout isolation), every collector against simulated DS920+
 and DS218+ data (also DSM-6-style tables, expansion units, renumbered interfaces and mounts), the device layer
-against a Domoticz stub, the real `plugin.py` loaded the way Domoticz loads it (including the injected globals), and
-`deploy.sh`.
+against a Domoticz stub, the real `plugin.py` loaded the way Domoticz loads it (including the injected globals),
+the scheduled off period (against a fake wall clock: a window across midnight, the grace period, an early start, a
+shutdown in the middle of a poll), and `deploy.sh`.
 
 **Not verified on a real DSM**, so please report what your NAS shows (a `capture_mib.sh` dump helps):
 
