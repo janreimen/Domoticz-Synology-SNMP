@@ -3,11 +3,12 @@
 ## Current state (0.2.4)
 
 Feature-complete for the original goal: a Synology NAS monitored through the native net-snmp tools, hardware detected
-dynamically, modular code, documented, tested against simulated DS920+ / DS218+ data and a real `snmpd`. 0.2.3 made the
+dynamically, modular code, documented, tested against simulated DS920+ / DS218+ data and a real `snmpd`, and run on a
+real DS1525+ and DS218+ (DSM 7.4.x). 0.2.3 made the
 scheduler, the logging and the failure handling behave as documented (see the CHANGELOG), added the *Plugin Health*
 device and moved the SNMPv3 privacy passphrase into a password field. 0.2.4 added the weekly off schedule for a NAS
 that is switched off on a schedule (`EXPECTED_OFFLINE*`: per weekday, up to six slots).
-**Not yet verified on real DSM hardware.** That is the main gap, and the next milestone.
+What real NAS units may still show differently is listed below. That is the next milestone.
 
 ## 0.2.x - verify on real hardware
 

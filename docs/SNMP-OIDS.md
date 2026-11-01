@@ -5,7 +5,7 @@ files are needed** on the Domoticz host. Table columns are written `<table entry
 
 Source column: **guide** = Synology's *DiskStation MIB Guide* (enterprise `1.3.6.1.4.1.6574`); **std** = standard MIB
 that DSM also serves; **old plugin** = taken from the previous plugin version and **not verified** against a guide or a
-real NAS. Nothing here has been checked against a real DSM yet; see the README.
+real NAS. See the README for what has been tested on real hardware (DS1525+ and DS218+, DSM 7.4.x) and what has not.
 
 Use `tools/capture_mib.sh NAS_IP` to record what your NAS returns for all of these.
 

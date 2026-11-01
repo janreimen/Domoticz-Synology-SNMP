@@ -30,12 +30,12 @@ Run it from a checkout (or unpacked archive) of this repository.
 ```sh
 ./deploy.sh --dry-run                               # show what would happen on this machine
 ./deploy.sh                                         # install on this machine
-./deploy.sh --host jan@rpi4office                   # install on another machine over SSH
-./deploy.sh --host jan@rpi4office --verify 192.168.1.20 --verify-args "-c public"
-./deploy.sh --host jan@rpi4office --rollback        # back to the previous version
+./deploy.sh --host user@domoticz-host                   # install on another machine over SSH
+./deploy.sh --host user@domoticz-host --verify 192.168.1.20 --verify-args "-c public"
+./deploy.sh --host user@domoticz-host --rollback        # back to the previous version
 ```
 
-Or through make: `make deploy HOST=jan@rpi4office VERIFY=192.168.1.20`, `make deploy-dry`, `make rollback HOST=...`.
+Or through make: `make deploy HOST=user@domoticz-host VERIFY=192.168.1.20`, `make deploy-dry`, `make rollback HOST=...`.
 
 What it does on the target:
 

@@ -31,9 +31,9 @@ only recognise plain numeric tags, so no `-alpha`, `-rc` or other suffix, neithe
 
 ## 3. Release (two-machine workflow)
 
-- [ ] On the development machine (rpi4office): commit on `development`
+- [ ] On the development machine (`dev-host`): commit on `development`
       (`git commit -am "Release X.Y.Z"`)
-- [ ] On the production machine (rpi4dmz): merge into `master` and push (`git merge development && git push`)
+- [ ] On the production machine (`prod-host`): merge into `master` and push (`git merge development && git push`)
 - [ ] Tag `vX.Y.Z` on `master` (digits only) and push the tag; create the GitHub release with the CHANGELOG entry
 - [ ] Check that the plugin manager lists the new version
 

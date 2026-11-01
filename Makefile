@@ -4,9 +4,9 @@ PYTHON   ?= python3
 DIST     := dist
 ARCHIVE  := $(DIST)/$(PLUGIN)-$(VERSION).tar.gz
 
-# make deploy HOST=jan@rpi4office                       deploy over SSH
-# make deploy                                           deploy on this machine
-# make deploy HOST=jan@rpi4office VERIFY=192.168.1.20   ... and query the NAS afterwards
+# make deploy HOST=user@domoticz-host                       deploy over SSH
+# make deploy                                               deploy on this machine
+# make deploy HOST=user@domoticz-host VERIFY=192.168.1.20   ... and query the NAS afterwards
 HOST   ?=
 VERIFY ?=
 DEPLOY_ARGS ?=

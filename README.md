@@ -12,8 +12,8 @@ A [Domoticz](https://www.domoticz.com) plugin that monitors a **Synology NAS** t
   A new area is one new file.
 * **Knows when the NAS is meant to be off.** A weekly schedule keeps a nightly shutdown out of the error log.
 
-> **Status:** version 0.2.4. Developed and tested against simulated DS920+ / DS218+ data and a real `snmpd`
-> serving it, **not yet against a real DSM**. Please read [what is verified and what is not](#what-is-verified-and-what-is-not)
+> **Status:** version 0.2.4. Developed and tested against real DS1525+ / DS218+ data and a real `snmpd` serving it,
+> with DSM 7.4.x running. Please read [what is verified and what is not](#what-is-verified-and-what-is-not)
 > and run the check in [Command line tool](#command-line-tool) on your NAS before relying on it.
 
 **Contents:** [Quick start](#quick-start) · [Settings](#settings) · [Devices](#what-is-detected-and-created) ·
@@ -66,7 +66,7 @@ sudo systemctl restart domoticz
 can verify the NAS afterwards:
 
 ```sh
-./deploy.sh --host jan@rpi4office --verify 192.168.1.20
+./deploy.sh --host user@domoticz-host --verify 192.168.1.20
 ```
 
 Updates, rollback and removal: **[DEPLOY.md](DEPLOY.md)**.
@@ -398,8 +398,8 @@ updates set it to *Trace*.
 
 **Which models and DSM versions work?** No model is special-cased: everything comes from the tables the NAS returns, so
 the same code serves a DS218+, a DS720+, a DS920+, a DS1525+ or a rack unit. Synology documents the MIB objects used
-here for DSM 6.2.4 and newer; DSM 7.x is what the fixtures imitate. Models released since 2025 use the same MIB as far
-as is known; that is an expectation, not something tested on hardware.
+here for DSM 6.2.4 and newer; DSM 7.x is what the fixtures imitate. A DS1525+ and a DS218+ have been tested on
+DSM 7.4.x. Other models use the same MIB as far as is known; that is an expectation, not something tested on hardware.
 
 **Does it need DSM packages or root access on the NAS?** No. It only reads over SNMP.
 
@@ -448,7 +448,9 @@ used minutes).
   day, the grace period after each, an early start, a shutdown in the middle of a poll;
 * `deploy.sh`.
 
-**Not verified on a real DSM**, so please report what your NAS shows (a `capture_mib.sh` dump helps):
+**Tested on real hardware:** a DS1525+ and a DS218+ running DSM 7.4.x.
+
+**Not yet confirmed on real hardware**, so please report what your NAS shows (a `capture_mib.sh` dump helps):
 
 * the exact output format and the OID for UPS runtime and battery values (taken from the old plugin);
 * the text of `hrStorageDescr` for volumes, USB shares and the system partition on your DSM version;

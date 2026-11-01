@@ -38,7 +38,11 @@ Baseline: 0.2.3. No behaviour changes for a NAS that runs all the time.
 - The Debug "next poll in about ..." line uses the requested pause.
 - README restructured for readability: quick start in five steps, settings split into hardware page, `.env` and the off
   schedule, shorter paragraphs and bullet lists, a document index. Review-style wording removed from CHANGELOG and
-  ROADMAP. No facts changed.
+  ROADMAP.
+- Status and verification notes (README, ROADMAP, `docs/SNMP-OIDS.md`, hardware report template): tested on a real
+  DS1525+ and DS218+ running DSM 7.4.x.
+- Host names in the deployment examples are generic placeholders (`user@domoticz-host`; `dev-host` and `prod-host` in
+  the release checklist).
 
 ## [0.2.3] - 2026-10-25
 

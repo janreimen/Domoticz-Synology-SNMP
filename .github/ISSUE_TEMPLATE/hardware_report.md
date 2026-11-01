@@ -5,7 +5,7 @@ title: "[hardware] <model> <DSM version>"
 labels: hardware
 ---
 
-The plugin has only been tested against simulated data so far, so reports from real NAS units are very welcome,
+The plugin has been tested on a DS1525+ and a DS218+ (DSM 7.4.x) so far, so reports from other NAS models and DSM versions are very welcome,
 **including "everything works"**.
 
 **NAS**
