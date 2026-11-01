@@ -136,7 +136,7 @@ synoSNMP/
   engine.py             connection probe, discovery and collector schedules, collector isolation and back-off,
                         plugin health, de-duplicated error log
   poller.py             background thread
-  offline.py            the scheduled off period of a NAS that is switched off at night (EXPECTED_OFFLINE)
+  offline.py            the weekly schedule of a NAS that is switched off on a schedule (EXPECTED_OFFLINE*)
   devices.py            the only module that touches the Domoticz device API
   model.py  util.py     Reading type; key / slug / rate helpers
   cli.py  __main__.py   python3 -m synoSNMP: the engine without Domoticz
@@ -181,29 +181,47 @@ Transport and housekeeping:
 
 These settings follow the existing collector boundaries. Consequently, readings inside one collector share its interval—for example, uptime shares `RESOURCES_INTERVAL`, and DSM update status shares `SYSTEM_INTERVAL`. Separate intervals inside those collectors would require splitting the collector architecture and are not implied by this configuration.
 
-**A NAS that is switched off on a schedule.** If the NAS is powered off every night (with the DSM power schedule, for
-example), tell the plugin when, so that its silence is not logged as an error every day:
+**A NAS that is switched off on a schedule.** If the NAS is powered off on a schedule (with the DSM power schedule, for
+example), tell the plugin when, so that its silence is not logged as an error. The schedule is a week: one line per
+weekday, each with none to six slots.
 
-| `.env` variable | Meaning | Default | Range |
-|---|---|---:|---|
-| `EXPECTED_OFFLINE` | the hours in which the NAS is off, `HH:MM-HH:MM`, local time of the Domoticz host; may cross midnight. Empty or absent: the NAS is expected to run all the time | (none) | |
-| `EXPECTED_OFFLINE_GRACE` | seconds after the end of the window in which silence is still expected, because DSM needs time to boot and start its SNMP service | 900 | 0–86400 |
+| `.env` variable | Meaning | Default |
+|---|---|---|
+| `EXPECTED_OFFLINE_MON` ... `EXPECTED_OFFLINE_SUN` | one line per weekday: up to **6 slots** `HH:MM-HH:MM`, separated by commas, in which the NAS is off. A slot belongs to the day on which it starts. An empty line (or `none`): no off period starts that day | (none) |
+| `EXPECTED_OFFLINE` | the same, for every weekday that has no line of its own | (none) |
+| `EXPECTED_OFFLINE_GRACE` | seconds after the end of each off period in which silence is still expected, because DSM needs time to boot and start its SNMP service (0-86400) | 900 |
 
-For a NAS that shuts down at 23:30 and starts at 12:00: `EXPECTED_OFFLINE=23:30-12:00`. Start the window a minute or
-two before the shutdown time; a poll that is in flight when DSM goes down is judged by the time at which it fails, not
-by the time at which it started. While the NAS does not answer inside the window, and in the grace period after it:
+Times are the local time of the Domoticz host (24-hour clock). A slot whose end is not later than its start runs into
+the next day: `23:30-12:00` on Monday is Monday 23:30 to Tuesday 12:00. Slots that touch or overlap, also across
+midnight, are one off period. Two slots of the same day must not overlap and a day has at most six slots; both are
+configuration errors. Without any slot the plugin treats a silent NAS as an outage at every hour, as before.
+
+```
+# a NAS that is off every night from 23:30 to 12:00 (the DSM power schedule of the same times)
+EXPECTED_OFFLINE=23:30-12:00
+
+# ... except Saturday, which has a second slot in the afternoon, and Sunday, which has none
+EXPECTED_OFFLINE=23:30-12:00
+EXPECTED_OFFLINE_SAT=13:00-15:00,23:30-12:00
+EXPECTED_OFFLINE_SUN=
+```
+
+In the second example the Saturday night still runs into Sunday (the slot starts on Saturday), and no off period starts
+on Sunday, so Sunday night is not expected to be silent. Start a slot a minute or two before the NAS shuts down; a poll
+that is in flight when DSM goes down is judged by the time at which it fails, not by the time at which it started.
+While the NAS does not answer inside an off period, and in the grace period after it:
 
 * no error is logged; one notice says that the silence is expected (and at what time it would become an outage), and one
   notice says that the NAS is back;
-* *Plugin Health* is grey and says why (*NAS switched off on schedule* / *Waiting for the NAS to start*);
+* *Plugin Health* is grey and says why (*NAS switched off on schedule until ...* / *Waiting for the NAS to start*);
 * the devices keep their last values and are **not** flagged timed out;
-* inside the window polling slows down to one probe every 5 minutes and wakes up when the window ends; in the grace
+* inside the off period polling slows down to one probe every 5 minutes and wakes up when the period ends; in the grace
   period the normal tick applies again.
 
-A NAS that answers inside the window (switched on early, or not shut down tonight) is polled normally. A NAS that is
-still silent when the grace period is over is an outage like any other: one error, a red health device, devices flagged
-timed out. Outside the window nothing changes. The command line tool ignores the schedule and reports a silent NAS as
-silent.
+A NAS that answers inside an off period (switched on early, or not shut down tonight) is polled normally. A NAS that
+is still silent when the grace period is over is an outage like any other: one error, a red health device, devices
+flagged timed out. Outside the off periods nothing changes. At start-up the schedule is written to the log, one line
+with every weekday. The command line tool ignores the schedule and reports a silent NAS as silent.
 
 **Polling.** The background thread starts a cycle every *tick* seconds, where the tick is the shortest interval of the
 collectors that exist at the chosen detail level (60 s with the defaults; an interval set for a collector that is not
@@ -277,8 +295,8 @@ reads, which is all that is needed to reproduce the problem offline. Remove seri
 | `Configuration warning: ... unknown setting X ignored (did you mean Y?)` | a typo in `.env`; the default stays in force until you fix the key |
 | `Configuration error: ... must be a number` / `must be between` | a value in `.env` is not a number or out of range; the hardware does not start until it is fixed |
 | `disks: SNMP error ...` (or another collector name) and the *Plugin Health* device is yellow | that one collector fails (a MIB table the NAS does not serve, a restricted SNMP view, a table that times out); everything else keeps working and the collector is retried with growing delays. `... : working again` follows when it recovers |
-| *Plugin Health* is grey | the NAS does not answer at an hour that `EXPECTED_OFFLINE` names, or within the grace period after it: nothing to fix. If the NAS is up and the device stays grey, check the window and the clock of the Domoticz host; an error follows once the grace period is over |
-| `Configuration error: EXPECTED_OFFLINE must look like 23:30-12:00` | the window in `.env` is not `HH:MM-HH:MM` (24-hour clock, start and end must differ); the hardware does not start until it is fixed |
+| *Plugin Health* is grey | the NAS does not answer in a slot of the `EXPECTED_OFFLINE` schedule, or within the grace period after it: nothing to fix. If the NAS is up and the device stays grey, check the schedule and the clock and time zone of the Domoticz host; an error follows once the grace period is over |
+| `Configuration error: EXPECTED_OFFLINE_TUE ...` (or `EXPECTED_OFFLINE`, another weekday) | a slot in `.env` is not `HH:MM-HH:MM` (24-hour clock, start and end must differ), a day has more than 6 slots, or two slots of one day overlap; the hardware does not start until it is fixed |
 | *Plugin Health* is red | `NAS not answering`: see the first row. `Not a Synology`, or `Polling stopped` with the reason (net-snmp tools missing): fix it and disable / enable the hardware |
 | `Device '...' was removed in Domoticz; creating it again` | you deleted a plugin device; clear *Used* instead of deleting to hide it |
 | `All 255 Domoticz units of this hardware are in use` | lower the detail level or delete unused devices |
@@ -297,9 +315,10 @@ MIB as far as is known; that is an expectation, not something tested on hardware
 
 **Does it need DSM packages or root access on the NAS?** No. It only reads over SNMP.
 
-**My NAS is switched off every night. Will the log show an error every day?** Not if you set `EXPECTED_OFFLINE` in
-`.env` (see *A NAS that is switched off on a schedule*). Without it, a NAS that does not answer is an outage, and the
-plugin reports it as one.
+**My NAS is switched off every night, or on certain days only. Will the log show an error every time?** Not if you
+describe the times in `.env`: `EXPECTED_OFFLINE` for every day, `EXPECTED_OFFLINE_MON` ... `_SUN` for single days, up to
+six slots each (see *A NAS that is switched off on a schedule*). Without them, a NAS that does not answer is an outage,
+and the plugin reports it as one.
 
 **Why do I see fewer devices than your catalogue?** The catalogue is for simulated hardware, and hidden devices are
 not shown until you add them under *Setup > Devices*.
@@ -333,8 +352,8 @@ credentials, aborting a request), the scheduler as the poller runs it (per-colle
 timeout isolation), every collector against simulated DS920+
 and DS218+ data (also DSM-6-style tables, expansion units, renumbered interfaces and mounts), the device layer
 against a Domoticz stub, the real `plugin.py` loaded the way Domoticz loads it (including the injected globals),
-the scheduled off period (against a fake wall clock: a window across midnight, the grace period, an early start, a
-shutdown in the middle of a poll), and `deploy.sh`.
+the weekly off schedule (against a fake wall clock: slots across midnight and into the next weekday, several slots a
+day, the grace period after each, an early start, a shutdown in the middle of a poll), and `deploy.sh`.
 
 **Not verified on a real DSM**, so please report what your NAS shows (a `capture_mib.sh` dump helps):
 
@@ -371,6 +390,8 @@ DS920+-like data set and are skipped automatically when it is not installed. `do
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add a collector or a model fixture, [ROADMAP.md](ROADMAP.md) for what is
 planned, [CHANGELOG.md](CHANGELOG.md) for what changed and [docs/SNMP-OIDS.md](docs/SNMP-OIDS.md) for the OID reference.
+The folder `files/` holds annexes, for example [files/Synology-SNMP-expected-downtime.xlsx](files/Synology-SNMP-expected-downtime.xlsx)
+(what the plugin does while the NAS is switched off on a schedule).
 
 ## License
 

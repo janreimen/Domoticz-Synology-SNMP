@@ -5,25 +5,34 @@
 Baseline: 0.2.3. No behaviour changes for a NAS that runs all the time.
 
 ### Added
-- **A NAS that is switched off on a schedule.** `EXPECTED_OFFLINE=23:30-12:00` in `.env` names the hours in which the
-  NAS is meant to be off (local time of the Domoticz host, may cross midnight). Until now the plugin logged "No SNMP
-  answer" as an error every night. While a silent NAS is inside that window, or inside the grace period after it
+- **A NAS that is switched off on a schedule.** Until now the plugin logged "No SNMP answer" as an error every time such
+  a NAS was off. The off times are described in `.env` as a week, in local time of the Domoticz host: one line per
+  weekday, `EXPECTED_OFFLINE_MON` ... `EXPECTED_OFFLINE_SUN`, each with **none to six slots** `HH:MM-HH:MM` separated by
+  commas. `EXPECTED_OFFLINE` is the line of every weekday that has none of its own (`EXPECTED_OFFLINE=23:30-12:00` is a
+  NAS that is off every night). A slot belongs to the day on which it starts and runs into the next day when its end is
+  not later than its start (`23:30-12:00` on Monday: Monday 23:30 to Tuesday 12:00); slots that touch or overlap, also
+  across midnight, are one off period. An empty weekday line (or `none`) means that no off period starts that day,
+  whatever `EXPECTED_OFFLINE` says. While a silent NAS is inside an off period, or inside the grace period after it
   (`EXPECTED_OFFLINE_GRACE`, default 900 s, 0-86400, so that DSM can boot and start SNMP):
   - no error is logged; one *notice* (shown at every logging level) says that the silence is expected and when it
     would become an outage, and one notice says that the NAS is back;
-  - the *Plugin Health* device is grey and says why (*NAS switched off on schedule*, *Waiting for the NAS to start*);
+  - the *Plugin Health* device is grey and says why (*NAS switched off on schedule until Thu 12:00*, *Waiting for the
+    NAS to start*);
   - the devices keep their last values and are not flagged timed out;
-  - polling slows down to one probe every 5 minutes and wakes up when the window ends (in the grace period the normal
-    tick applies again).
+  - polling slows down to one probe every 5 minutes and wakes up when the off period ends (in the grace period the
+    normal tick applies again).
 
-  A NAS that answers inside the window is polled normally. A NAS that is still silent after the grace period is an
+  A NAS that answers inside an off period is polled normally. A NAS that is still silent after the grace period is an
   outage as before: one error, red health device, devices flagged timed out. The failure time decides, not the start
-  of the poll that failed, so a shutdown in the middle of a poll is judged correctly. The command line tool ignores
-  the schedule. An invalid window is a configuration error; `EXPECTED_OFFLINE_GRACE` without `EXPECTED_OFFLINE` is
-  reported as a configuration warning.
+  of the poll that failed, so a shutdown in the middle of a poll is judged correctly. The schedule is written to the log
+  at start-up. The command line tool ignores it. More than six slots in a day, two overlapping slots in one day, a
+  slot that is not `HH:MM-HH:MM` and a grace period out of range are configuration errors that name the setting;
+  `EXPECTED_OFFLINE_GRACE` without any slot is reported as a configuration warning.
 - `CycleResult.expected_off` and `CycleResult.wait` (a cycle may ask the poller for a different pause than the tick),
   and an optional `wall` clock for `Engine`.
-- New module `synoSNMP/offline.py`; tests in `tests/test_offline.py` (45).
+- New module `synoSNMP/offline.py` (slots, the weekly schedule, off periods); tests in `tests/test_offline.py` (79).
+- Annex `files/Synology-SNMP-expected-downtime.xlsx`: how the plugin behaves while the NAS is off or silent, by state, with the
+  open decisions.
 
 ### Changed
 - The Debug "next poll in about ..." line uses the requested pause.

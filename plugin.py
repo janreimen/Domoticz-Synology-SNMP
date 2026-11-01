@@ -13,7 +13,7 @@
         </ul>
         <h3>Polling intervals and tuning</h3>
         Polling intervals (and the SNMP timeout / retries) are set in the plugin directory's <tt>.env</tt> file. Copy <tt>.env.sample</tt> to <tt>.env</tt>; interval values are in seconds.
-        A NAS that is switched off on a schedule (for example at night): set <tt>EXPECTED_OFFLINE</tt> there, so that its silence is not logged as an error.
+        A NAS that is switched off on a schedule (for example at night, or differently on each weekday): set <tt>EXPECTED_OFFLINE</tt> / <tt>EXPECTED_OFFLINE_MON</tt> ... <tt>EXPECTED_OFFLINE_SUN</tt> there, so that its silence is not logged as an error.
         <h3>SNMPv3</h3>
         Fill in Username and Password (authentication passphrase, min. 8 characters). "SNMPv3 options" is
         <tt>level;authProtocol;privProtocol</tt>, for example <tt>authPriv;SHA;AES</tt>. Enter the privacy passphrase in its own
@@ -99,10 +99,11 @@ class BasePlugin:
         Domoticz.Log("Synology SNMP plugin %s starting" % __version__)
         for warning in self.settings.warnings:
             Domoticz.Log("Configuration warning: %s" % warning)
-        window = self.settings.offline_window
-        if window is not None:
-            Domoticz.Log("%s is switched off on schedule (%s, EXPECTED_OFFLINE): its silence is not an error, until %s" % (
-                self.settings.host, window.label, window.deadline_label))
+        schedule = self.settings.offline_schedule
+        if schedule is not None:
+            Domoticz.Log("%s is switched off on schedule (EXPECTED_OFFLINE): %s. Its silence is not an error then, "
+                         "nor for %d min after each off period" % (
+                             self.settings.host, schedule.summary(), (schedule.grace + 59) // 60))
 
         try:
             client = SnmpClient(self.settings, trace=self._trace if self.settings.log_level >= 3 else None)

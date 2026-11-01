@@ -6,7 +6,7 @@ tested with a fake SNMP client.
 
 Failure policy
     * no SNMP answer      -> the whole cycle is "unreachable" (one log line, not one per poll)
-                             -- unless the NAS is meant to be off at this hour (EXPECTED_OFFLINE, or the grace
+                             -- unless the NAS is meant to be off at this hour (the EXPECTED_OFFLINE schedule, or the grace
                              period after it): then the silence is announced once as a notice, is no error,
                              the Plugin Health device is grey, polling slows to a probe every few minutes and
                              the devices are not flagged timed out
@@ -38,7 +38,7 @@ from . import oids
 from .collectors import Collector, Context, build_collectors
 from .config import Settings
 from .model import CRIT, NONE, OK, WARN, Reading
-from .offline import GRACE, INSIDE, OUTSIDE
+from .offline import GRACE, INSIDE, OUTSIDE, when
 from .snmpcli import SnmpClient, SnmpError, SnmpTimeout, SnmpUnavailable
 
 # (level, text) with level in "debug" | "info" | "notice" | "error".
@@ -48,7 +48,7 @@ Message = Tuple[str, str]
 SCHEDULE_SLACK = 0.25        # seconds: timing jitter tolerated when deciding that a schedule is due
 BACKOFF_BASE_MAX = 300       # first retry of a failed collector: min(its interval, this) seconds
 BACKOFF_CAP_MIN = 300        # retries never wait longer than max(its interval, this) seconds
-OFFLINE_PROBE_SECONDS = 300  # while the NAS is meant to be off: ask this often whether it is back (it wakes up at the end of the window)
+OFFLINE_PROBE_SECONDS = 300  # while the NAS is meant to be off: ask this often whether it is back (it wakes up at the end of the off period)
 
 
 class NotSynology(SnmpError):
@@ -110,7 +110,8 @@ class Engine:
         self._retry_at: Dict[str, float] = {}             # collector name -> do not run before (cycle-start clock)
         self._failing_since: Dict[str, float] = {}        # collector name -> cycle start of its first failure in a row
         self._off_announced = False                       # the scheduled silence was announced; announce the return, too
-        self._offline_phase_seen = OUTSIDE                # phase (INSIDE / GRACE) at the last expected silence
+        self._offline_phase_seen = OUTSIDE                # phase (INSIDE / GRACE) at the last expected silence ...
+        self._offline_period = None                       # ... and the off period (switched off at, on again at) it belongs to
 
     # -- public ---------------------------------------------------------------------
     def cycle(self, force: bool = False) -> CycleResult:
@@ -132,13 +133,13 @@ class Engine:
             result.reachable = False
             result.messages.append(("error", str(exc)))
         except SnmpTimeout as exc:
-            phase = self._offline_phase()
+            phase, period = self._offline_state()
             if phase == OUTSIDE:
                 self._lost(result, "No SNMP answer from %s:%d (%s). Check address, community/credentials, "
                            "that SNMP is enabled in DSM and that this host is allowed to query it."
                            % (self.settings.host, self.settings.port, exc))
             else:
-                self._expected_silence(result, phase)
+                self._expected_silence(result, phase, period)
         except SnmpError as exc:
             self._problem(result, "snmp", "SNMP request failed: %s" % exc)
             if isinstance(exc, NotSynology):
@@ -158,9 +159,9 @@ class Engine:
             result.stale_groups.clear()
         result.info = dict(self.info)
         if result.expected_off and self._offline_phase_seen == INSIDE:
-            # Nobody is home: ask again every few minutes, but be on time when the window ends.
-            window = self.settings.offline_window
-            result.wait = max(1.0, min(float(OFFLINE_PROBE_SECONDS), window.seconds_until_end(self._wall())))
+            # Nobody is home: ask again every few minutes, but be on time when the off period ends.
+            schedule = self.settings.offline_schedule
+            result.wait = max(1.0, min(float(OFFLINE_PROBE_SECONDS), schedule.seconds_until_end(self._wall())))
         # present_keys intentionally contains only fresh readings from collectors
         # that ran successfully. Cached readings refresh Domoticz values, but must
         # not hide a device that disappeared when its owning collector next runs.
@@ -348,11 +349,12 @@ class Engine:
         self._problem(result, "link", text)
 
     # -- a NAS that is switched off on a schedule ------------------------------------------
-    def _offline_phase(self) -> str:
-        window = self.settings.offline_window
-        return window.phase(self._wall()) if window is not None else OUTSIDE
+    def _offline_state(self):
+        """``(phase, off period)`` at this moment, see ``OfflineSchedule.state``; OUTSIDE without a schedule."""
+        schedule = self.settings.offline_schedule
+        return schedule.state(self._wall()) if schedule is not None else (OUTSIDE, None)
 
-    def _expected_silence(self, result: CycleResult, phase: str) -> None:
+    def _expected_silence(self, result: CycleResult, phase: str, period) -> None:
         """No answer, and the NAS is meant to be off (or still booting): not an error.  Announced once."""
         result.reachable = False
         result.expected_off = True
@@ -360,12 +362,18 @@ class Engine:
             self.ctx.rates.forget_all()
         self._connected = False
         self._offline_phase_seen = phase
+        self._offline_period = period
         if not self._off_announced:
             self._off_announced = True
-            window = self.settings.offline_window
-            result.messages.append(("notice", "%s:%d does not answer, as expected: the NAS is switched off %s. "
-                                    "This is not logged as an error unless it is still silent at %s." % (
-                                        self.settings.host, self.settings.port, window.label, window.deadline_label)))
+            now, end = self._wall(), period[1]
+            if phase == INSIDE:
+                why = "the NAS is switched off on schedule until %s" % when(end, now)
+            else:
+                why = "the scheduled off period ended at %s and the NAS is given time to start" % when(end, now)
+            result.messages.append(("notice", "%s:%d does not answer, as expected: %s. This is not logged as an error "
+                                    "unless it is still silent at %s." % (
+                                        self.settings.host, self.settings.port, why,
+                                        when(self.settings.offline_schedule.deadline(end), now))))
 
     # -- the plugin's own devices ---------------------------------------------------------
     def _build_health(self, result: CycleResult) -> None:
@@ -375,13 +383,13 @@ class Engine:
         elif result.not_synology:
             level, text = CRIT, "Not a Synology: the Synology MIB is not served"
         elif result.expected_off:
-            window = self.settings.offline_window
+            now, end = self._wall(), self._offline_period[1]
             if self._offline_phase_seen == GRACE:
                 level, text = NONE, "Waiting for the NAS to start (expected back at %s, outage from %s)" % (
-                    window.back_label, window.deadline_label)
+                    when(end, now), when(self.settings.offline_schedule.deadline(end), now))
             else:
-                level, text = NONE, "NAS switched off on schedule (%s), probing every %d min" % (
-                    window.label, OFFLINE_PROBE_SECONDS // 60)
+                level, text = NONE, "NAS switched off on schedule until %s, probing every %d min" % (
+                    when(end, now), OFFLINE_PROBE_SECONDS // 60)
         elif not result.reachable:
             level, text = CRIT, "NAS not answering (no SNMP response)"
         elif "snmp" in self._open_problems or "engine" in self._open_problems:

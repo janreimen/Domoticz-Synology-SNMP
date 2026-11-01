@@ -14,8 +14,8 @@ Hardware-page fields (see the manifest in plugin.py):
     Mode5     detail level: 1 basic | 2 standard | 3 full
     Mode6     logging: Normal | Debug | Trace
 
-Polling intervals, transport tuning and the hours in which the NAS is meant to be off (EXPECTED_OFFLINE) are loaded
-from the plugin-local .env file.
+Polling intervals, transport tuning and the weekly schedule in which the NAS is meant to be off (EXPECTED_OFFLINE*)
+are loaded from the plugin-local .env file.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional
 
-from .offline import DEFAULT_GRACE, OfflineWindow
+from .offline import DAYS, DEFAULT_GRACE, OfflineSchedule, parse_slots
 
 LEVEL_BASIC = 1
 LEVEL_STANDARD = 2
@@ -66,7 +66,7 @@ class Settings:
     retries: int = 1                 # SNMP retries per request                   (.env SNMP_RETRIES)
     discovery_interval: int = 3600   # re-detect hardware this often (seconds)    (.env DISCOVERY_INTERVAL)
     refresh_interval: int = 300      # rewrite unchanged values this often (s)    (.env REFRESH_INTERVAL)
-    offline_window: Optional[OfflineWindow] = None   # hours in which the NAS is meant to be off  (.env EXPECTED_OFFLINE[_GRACE])
+    offline_schedule: Optional[OfflineSchedule] = None   # when the NAS is meant to be off (.env EXPECTED_OFFLINE*)
     env_file: Optional[str] = None   # the .env that was read, None = built-in defaults
     warnings: List[str] = field(default_factory=list)   # non-fatal configuration problems, logged at start-up
 
@@ -161,8 +161,9 @@ TRANSPORT_SETTINGS = {
     "REFRESH_INTERVAL": ("refresh_interval", 30, 86400),
 }
 
-#: A NAS that is switched off on a schedule (see offline.py): the window, and the boot time allowed after it.
-OFFLINE_KEYS = ("EXPECTED_OFFLINE", "EXPECTED_OFFLINE_GRACE")
+#: A NAS that is switched off on a schedule (see offline.py): the slots of every day (EXPECTED_OFFLINE) or of one
+#: weekday (EXPECTED_OFFLINE_MON ... _SUN), and the boot time allowed after each off period.
+OFFLINE_KEYS = ("EXPECTED_OFFLINE", "EXPECTED_OFFLINE_GRACE") + tuple("EXPECTED_OFFLINE_" + d for d in DAYS)
 
 KNOWN_KEYS = tuple(SCHEDULE_DEFAULTS) + tuple(TRANSPORT_SETTINGS) + OFFLINE_KEYS
 
@@ -242,17 +243,30 @@ def _apply_transport(s: Settings, env_values: Mapping[str, str]) -> None:
 
 
 def _apply_offline(s: Settings, env_values: Mapping[str, str]) -> None:
+    """EXPECTED_OFFLINE is the entry of every weekday; EXPECTED_OFFLINE_MON ... _SUN replace it for one day.
+
+    A weekday line that is present but empty (or ``none``) means no off period starts that day, whatever
+    EXPECTED_OFFLINE says.  No slot on any day: no schedule.
+    """
     raw_grace = env_values.get("EXPECTED_OFFLINE_GRACE", "")
     grace = _to_int(raw_grace, "EXPECTED_OFFLINE_GRACE", 0, 86400) if raw_grace else DEFAULT_GRACE
-    raw = env_values.get("EXPECTED_OFFLINE", "")
-    if not raw:
-        if raw_grace:
-            s.warnings.append("EXPECTED_OFFLINE_GRACE has no effect without EXPECTED_OFFLINE")
-        return
+    everyday = _slots_setting("EXPECTED_OFFLINE", env_values.get("EXPECTED_OFFLINE", ""))
+    days = []
+    for name in DAYS:
+        key = "EXPECTED_OFFLINE_" + name
+        days.append(_slots_setting(key, env_values[key]) if key in env_values else everyday)
+    if any(days):
+        s.offline_schedule = OfflineSchedule(tuple(days), grace)
+    elif raw_grace:
+        s.warnings.append("EXPECTED_OFFLINE_GRACE has no effect without a slot in EXPECTED_OFFLINE "
+                          "or in an EXPECTED_OFFLINE_<DAY> entry")
+
+
+def _slots_setting(key: str, raw: str):
     try:
-        s.offline_window = OfflineWindow.parse(raw, grace)
+        return parse_slots(raw)
     except ValueError as exc:
-        raise SettingsError("EXPECTED_OFFLINE %s" % exc)
+        raise SettingsError("%s %s" % (key, exc))
 
 
 def _to_int(text: str, label: str, low: int, high: int) -> int:
