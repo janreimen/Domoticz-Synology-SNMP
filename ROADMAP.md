@@ -25,8 +25,8 @@ how likely they are to matter:
 
 ## 0.3 - fewer process starts, more coverage
 
-- [x] ~~Batch several walks into one `snmpbulkwalk` call~~ Investigated in 0.2.3: `snmpbulkwalk` walks only the first OID
-      it is given, so this is not possible. The first-poll call count stays as it is (8 / 14 / 19)
+- [x] ~~Batch several walks into one `snmpbulkwalk` call~~ Not possible (0.2.3): `snmpbulkwalk` walks only the first OID
+      it is given. The first-poll call count stays as it is (8 / 14 / 19)
 - [x] Pass SNMP credentials through a private (mode 0600) net-snmp configuration file instead of command-line arguments,
       so they no longer show up in `ps` (0.2.1, see SECURITY.md)
 - [x] Configurable polling schedules (0.2.2: one interval per collector family in `.env`; 0.2.3: the scheduler runs

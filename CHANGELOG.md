@@ -36,12 +36,13 @@ Baseline: 0.2.3. No behaviour changes for a NAS that runs all the time.
 
 ### Changed
 - The Debug "next poll in about ..." line uses the requested pause.
+- README restructured for readability: quick start in five steps, settings split into hardware page, `.env` and the off
+  schedule, shorter paragraphs and bullet lists, a document index. Review-style wording removed from CHANGELOG and
+  ROADMAP. No facts changed.
 
 ## [0.2.3] - 2026-10-25
 
-Every item under *Fixed* was reproduced against 0.2.2 by running the code (scheduler timelines on the fixture NAS,
-the CLI, the plugin's logging, a deleted device, `.env` edge cases) before it was changed, and has a regression test
-that fails on 0.2.2.
+Every item under *Fixed* has a regression test that fails on 0.2.2.
 
 ### Fixed
 - **Collectors on the tick were skipped every second cycle.** A collector's last run was stamped when it *finished*, so
@@ -66,7 +67,7 @@ that fails on 0.2.2.
 - **A collector that had stopped answering looked healthy.** 0.2.2 re-sent the cached readings of a failing collector
   on every cycle, so Domoticz kept refreshing "last seen" and never flagged them: after 40 minutes of a dead drive table
   the drive temperature was still green and "just updated". The old values are no longer re-sent (the devices keep their
-  last value and an honest age), and the devices are flagged timed out when a retry fails after that value has
+  last value, and its age stays visible), and the devices are flagged timed out when a retry fails after that value has
   become more than two of the collector's intervals old; the next good reading clears the flag.
 - **A device deleted in Domoticz stayed gone** until the next restart, and the plugin silently wrote to nothing. It is
   created again on the next poll, with a log line that says how to hide a device properly (clear *Used*).
@@ -126,7 +127,7 @@ that fails on 0.2.2.
   directories without a process id (0.2.2 and older) and anything doubtful are left alone.
 
 ### Notes
-- **Investigated and not changed:** SNMPv1 GETs that mix present and absent objects work as they are (the `snmpget` tool
+- **Not changed:** SNMPv1 GETs that mix present and absent objects work as they are (the `snmpget` tool
   retries without the rejected object; a regression test against a real `snmpd` pins that). `snmpbulkwalk` cannot walk
   several subtrees in one call (it walks only the first OID given), so "batch the walks" is not possible.
 - **Deferred:** changing device keys (`DeviceID`) to make them more stable. The Domoticz plugin API cannot rename the
